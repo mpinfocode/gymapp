@@ -15,11 +15,11 @@ public struct RecordsScreen: View {
     public init() {}
 
     public var body: some View {
-        let events = RecordTimeline.events(in: app.store.sessions)
         let start = range.start(from: app.now, calendar: app.calendar)
-        let inRange = events.filter { $0.date >= start }
+        // La cronologia si calcola una volta sola: da lì escono sia l'elenco sia il grafico.
+        let inRange = Stats.recordHistory(in: app.store.sessions).filter { $0.date >= start }
         // Un record per esercizio: contano gli esercizi migliorati, non le ripetizioni del primato.
-        let latest = RecordTimeline.latestPerExercise(inRange)
+        let latest = Stats.latestPerExercise(inRange)
         let months = monthlyPoints(inRange)
 
         ScrollView {
@@ -51,7 +51,7 @@ public struct RecordsScreen: View {
 
     // MARK: - Grafico
 
-    private func monthlyPoints(_ events: [RecordEvent]) -> [TrainingPoint] {
+    private func monthlyPoints(_ events: [Stats.RecordEntry]) -> [TrainingPoint] {
         guard let current = app.calendar.date(from: app.calendar.dateComponents([.year, .month], from: app.now)) else {
             return []
         }
@@ -66,14 +66,14 @@ public struct RecordsScreen: View {
         }
         starts.reverse()
 
-        var byMonth: [Date: [RecordEvent]] = [:]
+        var byMonth: [Date: [Stats.RecordEntry]] = [:]
         for event in events {
             guard let start = app.calendar.date(from: app.calendar.dateComponents([.year, .month], from: event.date)) else { continue }
             byMonth[start, default: []].append(event)
         }
         var counts: [Date: Double] = [:]
         for (start, monthEvents) in byMonth {
-            counts[start] = Double(RecordTimeline.latestPerExercise(monthEvents).count)
+            counts[start] = Double(Stats.latestPerExercise(monthEvents).count)
         }
         return starts.map { TrainingPoint(date: $0, value: counts[$0] ?? 0) }
     }
@@ -124,7 +124,7 @@ public struct RecordsScreen: View {
     // MARK: - Elenco
 
     @ViewBuilder
-    private func list(_ events: [RecordEvent]) -> some View {
+    private func list(_ events: [Stats.RecordEntry]) -> some View {
         if !events.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 Text("Esercizi")
@@ -135,10 +135,21 @@ public struct RecordsScreen: View {
                     NavigationLink(value: AppRoute.exercise(id: event.exerciseID)) {
                         ValueRow(
                             title: app.store.exerciseDisplayName(id: event.exerciseID),
-                            subtitle: "\(Formatters.relativeDay(event.date, now: app.now, calendar: app.calendar)) · prima \(Formatters.weight(event.previousKg, unit: app.unit))",
-                            value: Formatters.weight(event.weightKg, unit: app.unit),
+                            subtitle: "\(Formatters.relativeDay(event.date, now: app.now, calendar: app.calendar)) · \(RecordFormat.kindName(event))",
                             showsSeparator: event.id != events.last?.id
-                        )
+                        ) {
+                            // Il miglioramento dice già qual era il primato precedente.
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text(RecordFormat.value(event, unit: app.unit))
+                                    .font(.system(.body, weight: .medium))
+                                    .monospacedDigit()
+                                    .foregroundStyle(Theme.textPrimary)
+                                Text(RecordFormat.improvement(event, unit: app.unit))
+                                    .font(.captionText)
+                                    .monospacedDigit()
+                                    .foregroundStyle(tint.deep)
+                            }
+                        }
                     }
                     .buttonStyle(.plain)
                 }

@@ -17,6 +17,10 @@ private let deviceHeight: CGFloat = 852
 func makeScenes(full: AppEnvironment, empty: AppEnvironment, running: AppEnvironment) -> [SnapshotScene] {
     let sessionID = full.store.sessions.first?.id ?? UUID()
     let exerciseID = SampleProgram.exerciseIDs.first ?? "0025"
+    // Prima serie completata della prima sessione: la scena "correggi serie" di Progressi.
+    let correctionEntry = full.store.session(id: sessionID)?.entries.first { $0.sets.contains(where: \.isCompleted) }
+    let correctionEntryID = correctionEntry?.id ?? UUID()
+    let correctionSetID = correctionEntry?.sets.first(where: \.isCompleted)?.id ?? UUID()
 
     // Sessione: quattro momenti costruiti al secondo (vedi MockData+Session.swift).
     let library = full.store.exercises
@@ -31,6 +35,12 @@ func makeScenes(full: AppEnvironment, empty: AppEnvironment, running: AppEnviron
     let sessionSuperset = SessionMock.environment(
         repository: library, dayIndex: 0, completedEntries: 3, partialSets: 0,
         lastSetSecondsAgo: 900, elapsedMinutes: 46
+    )
+    // Giorno Pull: il secondo esercizio è a corpo libero (trazioni), dove la
+    // progressione proposta è a ripetizioni e non a carico.
+    let sessionBodyweight = SessionMock.environment(
+        repository: library, dayIndex: 1, completedEntries: 1, partialSets: 0,
+        lastSetSecondsAgo: 900, elapsedMinutes: 22
     )
     let sessionDuration = SessionMock.environment(
         repository: library, dayIndex: 2, completedEntries: 5, partialSets: 0,
@@ -50,6 +60,13 @@ func makeScenes(full: AppEnvironment, empty: AppEnvironment, running: AppEnviron
                       view: RootView(environment: full, initialTab: .progress)),
         SnapshotScene("root-oggi-scuro", height: deviceHeight, dark: true,
                       view: RootView(environment: full, initialTab: .today)),
+
+        // Avvio fallito: lo stato di errore ha sempre la sua azione "Riprova".
+        SnapshotScene("root-avvio-errore", height: deviceHeight,
+                      view: RootView(environment: AppEnvironment(
+                          store: empty.store,
+                          phase: .failed(AppEnvironment.libraryFailureMessage)
+                      ))),
 
         // Shell, primo avvio (nessuna scheda, nessuno storico).
         SnapshotScene("root-oggi-vuoto", height: deviceHeight,
@@ -114,6 +131,10 @@ func makeScenes(full: AppEnvironment, empty: AppEnvironment, running: AppEnviron
         SnapshotScene("progressi-dettaglio-volume", view: screen(TrainingMetricDetailScreen(metric: .volume), in: full)),
         SnapshotScene("progressi-misure", view: screen(BodyMeasuresScreen(), in: full)),
         SnapshotScene("progressi-nuova-rilevazione", view: screen(BodyEntrySheet(entry: nil, defaultDate: full.now), in: full)),
+        SnapshotScene("progressi-correggi-serie", view: screen(
+            SetCorrectionSheet(sessionID: sessionID, entryID: correctionEntryID, setID: correctionSetID),
+            in: full
+        )),
         SnapshotScene("progressi-storico", view: screen(WorkoutHistoryScreen(), in: full)),
         SnapshotScene("progressi-record", view: screen(RecordsScreen(), in: full)),
         // Sessione attiva: altezza reale da iPhone e versione alta per la pagina intera.
@@ -129,6 +150,8 @@ func makeScenes(full: AppEnvironment, empty: AppEnvironment, running: AppEnviron
                       view: screen(ActiveSessionScreen(onMinimize: {}), in: sessionSuperset)),
         SnapshotScene("sessione-durata", height: deviceHeight, settle: 2.5,
                       view: screen(ActiveSessionScreen(onMinimize: {}), in: sessionDuration)),
+        SnapshotScene("sessione-corpo-libero", height: deviceHeight, settle: 2.5,
+                      view: screen(ActiveSessionScreen(onMinimize: {}), in: sessionBodyweight)),
         SnapshotScene("sessione-menu", height: deviceHeight,
                       view: screen(
                         SetOptionsSheet(

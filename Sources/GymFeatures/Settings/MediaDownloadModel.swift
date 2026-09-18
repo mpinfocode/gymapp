@@ -33,7 +33,7 @@ final class MediaDownloadModel {
     var cacheSizeText: String {
         guard cacheBytes > 0 else { return "vuota" }
         let megabytes = Double(cacheBytes) / (1024 * 1024)
-        guard megabytes >= 0.1 else { return "meno di 0,1 MB" }
+        guard megabytes >= 0.1 else { return "meno di \(Formatters.decimal(0.1)) MB" }
         return "\(Formatters.decimal(megabytes)) MB"
     }
 
@@ -43,11 +43,11 @@ final class MediaDownloadModel {
         case .idle:
             return nil
         case .running(let done, let total):
-            return "\(Formatters.groupedInteger(Double(done))) di \(Formatters.groupedInteger(Double(total)))"
+            return "\(Formatters.integer(done)) di \(Formatters.integer(total))"
         case .finished(let available, let total):
             return available >= total
                 ? "Tutti i media sono disponibili offline."
-                : "\(Formatters.groupedInteger(Double(available))) media su \(Formatters.groupedInteger(Double(total))) disponibili offline."
+                : "\(Formatters.integer(available)) media su \(Formatters.integer(total)) disponibili offline."
         }
     }
 

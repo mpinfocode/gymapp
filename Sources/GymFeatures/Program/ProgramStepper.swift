@@ -22,7 +22,12 @@ struct ProgramStepper: View {
 
     var body: some View {
         HStack(spacing: Theme.Spacing.s) {
-            button("minus", label: "Riduci: \(title)", enabled: canDecrease, action: onDecrease)
+            ProgramStepperButton(
+                systemImage: "minus",
+                label: "Riduci: \(title)",
+                isEnabled: canDecrease,
+                action: onDecrease
+            )
 
             HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.xs + 2) {
                 Text(value)
@@ -36,19 +41,33 @@ struct ProgramStepper: View {
             .frame(minWidth: 56)
             .accessibilityHidden(true)
 
-            button("plus", label: "Aumenta: \(title)", enabled: canIncrease, action: onIncrease)
+            ProgramStepperButton(
+                systemImage: "plus",
+                label: "Aumenta: \(title)",
+                isEnabled: canIncrease,
+                action: onIncrease
+            )
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(title))
         .accessibilityValue(Text([value, unit].compactMap { $0 }.joined(separator: " ")))
     }
+}
 
-    private func button(
-        _ systemImage: String,
-        label: String,
-        enabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
+/// Il cerchietto "meno" / "più" dello stepper, da solo.
+///
+/// Sta qui perché lo usa anche il campo "carico previsto" dell'editor, che ha un
+/// campo di testo al posto del numero: i due controlli devono avere esattamente
+/// lo stesso peso visivo e la stessa area di tocco.
+struct ProgramStepperButton: View {
+
+    let systemImage: String
+    /// Etichetta VoiceOver completa ("Riduci: carico previsto").
+    let label: String
+    var isEnabled: Bool = true
+    let action: () -> Void
+
+    var body: some View {
         Button {
             Haptics.play(.selection)
             action()
@@ -62,8 +81,8 @@ struct ProgramStepper: View {
                 .contentShape(Circle())
         }
         .buttonStyle(PressableButtonStyle())
-        .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.4)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.4)
         .accessibilityLabel(Text(label))
     }
 }

@@ -96,10 +96,32 @@ public final class AppEnvironment {
     /// Chiamarla più volte è innocuo: ``AppStore/load()`` è idempotente.
     public func start() async {
         await store.load()
-        if store.exercises == nil {
-            phase = .failed(store.loadErrors.first ?? "Libreria esercizi non disponibile.")
-        } else {
-            phase = .ready
-        }
+        phase = Self.phase(for: store)
+    }
+
+    /// Riprova a caricare **solo** la libreria esercizi dopo un errore.
+    ///
+    /// È l'azione "Riprova" della schermata di avvio: i dati dell'utente sono già
+    /// stati letti da ``start()``, qui si ritenta il pezzo che è andato storto
+    /// (``AppStore/reloadExercises()``). Durante il tentativo la fase torna a
+    /// `.loading`, così la schermata non resta con il messaggio di errore sotto le
+    /// dita mentre il caricamento è in corso.
+    public func retryLibrary() async {
+        phase = .loading
+        _ = await store.reloadExercises()
+        phase = Self.phase(for: store)
+    }
+
+    /// Messaggio mostrato quando la libreria esercizi non si carica.
+    ///
+    /// Non riporta l'errore tecnico dello store: all'utente non dice niente e in
+    /// caso di JSON malformato sarebbe un muro di testo. Quello che conta è che i
+    /// dati personali non sono in pericolo e che si può ritentare.
+    public static let libraryFailureMessage =
+        "Gli esercizi non si sono caricati. I tuoi allenamenti e le tue schede sono al sicuro."
+
+    /// Fase corrispondente allo stato corrente dello store.
+    private static func phase(for store: AppStore) -> LibraryPhase {
+        store.exercises == nil ? .failed(libraryFailureMessage) : .ready
     }
 }

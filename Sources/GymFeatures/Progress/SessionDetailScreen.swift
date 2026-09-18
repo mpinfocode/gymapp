@@ -14,6 +14,8 @@ public struct SessionDetailScreen: View {
     private let sessionID: UUID
 
     @State private var isConfirmingDelete = false
+    /// Serie su cui è aperto il foglio di correzione.
+    @State private var correction: SetCorrection?
 
     public init(sessionID: UUID) {
         self.sessionID = sessionID
@@ -42,15 +44,30 @@ public struct SessionDetailScreen: View {
         } message: {
             Text("Le serie registrate verranno rimosse dallo storico e dalle statistiche.")
         }
+        .sheet(item: $correction) { correction in
+            SetCorrectionSheet(
+                sessionID: sessionID,
+                entryID: correction.entryID,
+                setID: correction.setID
+            )
+            .presentationDetents([.medium])
+        }
+    }
+
+    /// Riferimento a una serie dello storico: apre il foglio di correzione.
+    struct SetCorrection: Identifiable, Hashable {
+        let entryID: UUID
+        let setID: UUID
+        var id: UUID { setID }
     }
 
     // MARK: - Contenuto
 
     @ViewBuilder
     private func content(_ session: WorkoutSession) -> some View {
-        let records = RecordTimeline.records(
+        let records = Stats.records(
             inSession: session.id,
-            events: RecordTimeline.events(in: app.store.sessions)
+            entries: Stats.recordHistory(in: app.store.sessions)
         )
 
         ScrollView {
@@ -112,11 +129,12 @@ public struct SessionDetailScreen: View {
     // MARK: - Esercizi
 
     @ViewBuilder
-    private func exerciseBlock(_ entry: SessionEntry, records: [String: Double]) -> some View {
+    private func exerciseBlock(_ entry: SessionEntry, records: [String: Stats.RecordEntry]) -> some View {
         let sets = entry.sets.filter(\.isCompleted)
-        // Una sola etichetta "Record" per esercizio: la serie che ha firmato il primato.
-        let recordSetID = records[entry.exerciseID].flatMap { weight in
-            sets.first { $0.isWorkingSet && ($0.weightKg ?? 0) >= weight }?.id
+        let record = records[entry.exerciseID]
+        // Una sola etichetta per esercizio: la serie che ha firmato il primato.
+        let recordSetID = record.flatMap { record in
+            sets.first { $0.isWorkingSet && ($0.weightKg ?? 0) >= record.value }?.id
         }
         VStack(alignment: .leading, spacing: Theme.Spacing.m) {
             exerciseRow(entry, sets: sets)
@@ -130,8 +148,9 @@ public struct SessionDetailScreen: View {
                         setRow(
                             set,
                             position: index + 1,
+                            entryID: entry.id,
                             measure: entry.measureKind,
-                            isRecord: set.id == recordSetID,
+                            record: set.id == recordSetID ? record : nil,
                             showsSeparator: set.id != sets.last?.id
                         )
                     }
@@ -173,41 +192,51 @@ public struct SessionDetailScreen: View {
     private func setRow(
         _ set: SetLog,
         position: Int,
+        entryID: UUID,
         measure: MeasureKind,
-        isRecord: Bool,
+        record: Stats.RecordEntry?,
         showsSeparator: Bool
     ) -> some View {
         VStack(spacing: 0) {
-            HStack(spacing: Theme.Spacing.m) {
-                Text("\(position)\(set.kind.symbol)")
-                    .font(.system(.footnote, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.textTertiary)
-                    .frame(width: 26, alignment: .leading)
+            Button {
+                correction = SetCorrection(entryID: entryID, setID: set.id)
+            } label: {
+                HStack(spacing: Theme.Spacing.m) {
+                    Text("\(position)\(set.kind.symbol)")
+                        .font(.system(.footnote, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.textTertiary)
+                        .frame(width: 26, alignment: .leading)
 
-                Text(setText(set, measure: measure))
-                    .font(.cellNumber)
-                    .foregroundStyle(Theme.textPrimary)
+                    Text(setText(set, measure: measure))
+                        .font(.cellNumber)
+                        .foregroundStyle(Theme.textPrimary)
 
-                if let rpe = set.rpe {
-                    Text("RPE \(Formatters.decimal(rpe))")
-                        .font(.captionText)
-                        .foregroundStyle(Theme.textSecondary)
+                    if let rpe = set.rpe {
+                        Text("RPE \(Formatters.decimal(rpe))")
+                            .font(.captionText)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+
+                    Spacer(minLength: Theme.Spacing.s)
+
+                    if let record {
+                        // Tipo di primato e quanto ha battuto il precedente.
+                        Text("\(record.kind.displayName) \(RecordFormat.improvement(record, unit: app.unit))")
+                            .font(.system(.caption, weight: .semibold))
+                            .lineLimit(1)
+                            .foregroundStyle(Theme.Metric.rosa.onFill)
+                            .padding(.horizontal, Theme.Spacing.s + 2)
+                            .padding(.vertical, 4)
+                            .background(Theme.Metric.rosa.fill, in: Capsule(style: .continuous))
+                    }
                 }
-
-                Spacer(minLength: Theme.Spacing.s)
-
-                if isRecord {
-                    Text("Record")
-                        .font(.system(.caption, weight: .semibold))
-                        .foregroundStyle(Theme.Metric.rosa.onFill)
-                        .padding(.horizontal, Theme.Spacing.s + 2)
-                        .padding(.vertical, 4)
-                        .background(Theme.Metric.rosa.fill, in: Capsule(style: .continuous))
-                }
+                .frame(minHeight: Theme.Size.minTapTarget)
+                .contentShape(Rectangle())
             }
-            .frame(minHeight: Theme.Size.minTapTarget)
+            .buttonStyle(.plain)
             .accessibilityElement(children: .combine)
+            .accessibilityHint(Text("Correggi la serie"))
 
             if showsSeparator {
                 Rectangle()

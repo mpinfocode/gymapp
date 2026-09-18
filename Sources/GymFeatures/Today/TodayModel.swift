@@ -54,7 +54,7 @@ enum TodayModel {
         let word = count == 1 ? "esercizio" : "esercizi"
         let minutes = estimatedMinutes(of: day)
         guard minutes > 0 else { return "\(count) \(word)" }
-        return "\(count) \(word) · circa \(minutes) min"
+        return "\(count) \(word) · circa \(Formatters.minutes(seconds: minutes * 60))"
     }
 
     // MARK: - Stato della scheda

@@ -1,12 +1,19 @@
 import Foundation
 import GymCore
 
-/// Formattatori condivisi dalle schermate: funzioni pure, italiane, senza locale
-/// di sistema (così il risultato è identico su iPhone, su macOS e negli screenshot).
+/// Formattatori condivisi dalle schermate: un **sottile strato** sopra
+/// ``ItalianNumberFormat`` e le API di presentazione di GymCore.
+///
+/// Qui non si formatta più niente a mano e non si rattoppano stringhe già
+/// prodotte altrove: la regola italiana (virgola decimale, migliaia col punto,
+/// meno ASCII) vive in GymCore, questo tipo si limita a scegliere l'arrotondamento
+/// e il simbolo giusti per ogni posto della UI. Il risultato non dipende dalla
+/// locale di sistema: identico su iPhone, su macOS e negli screenshot.
 ///
 /// Regole di design rispettate qui e da rispettare altrove:
 /// - virgola decimale italiana ("82,5 kg");
-/// - separatore delle migliaia "." ("12.480 kg");
+/// - separatore delle migliaia "." solo dove il numero è "da leggere" ("12.480 kg"),
+///   mai accanto a un campo di input;
 /// - mai "—" né "–": un valore mancante è "·" (``Formatters/missing``).
 public enum Formatters {
 
@@ -17,12 +24,15 @@ public enum Formatters {
 
     /// Carico nell'unità scelta dall'utente, con la virgola decimale ("82,5 kg").
     ///
+    /// Senza separatore delle migliaia: questo numero sta spesso accanto a un
+    /// campo di input, dove il punto confonderebbe.
+    ///
     /// - Parameters:
     ///   - kilograms: valore salvato, sempre in kg.
     ///   - unit: unità di presentazione.
     ///   - includeSymbol: se includere "kg" / "lb".
     public static func weight(_ kilograms: Double, unit: WeightUnit, includeSymbol: Bool = true) -> String {
-        italianDecimals(unit.format(kilograms: kilograms, fractionDigits: 1, includeSymbol: includeSymbol))
+        unit.format(kilograms: kilograms, fractionDigits: 1, includeSymbol: includeSymbol)
     }
 
     /// Carico opzionale: `nil` diventa ``missing``.
@@ -32,23 +42,33 @@ public enum Formatters {
     }
 
     /// Volume arrotondato con separatore delle migliaia ("12.480 kg").
+    ///
+    /// Diverso da ``GymCore/Stats/formatVolume(_:unit:)``, che abbrevia oltre le
+    /// 10 t ("12,4k kg"): nelle schermate il numero per esteso resta leggibile e
+    /// più onesto.
     public static func volume(_ kilograms: Double, unit: WeightUnit, includeSymbol: Bool = true) -> String {
-        let converted = unit.value(fromKilograms: kilograms)
-        let text = groupedInteger(converted.rounded())
+        let text = ItalianNumberFormat.integer(unit.value(fromKilograms: kilograms))
         return includeSymbol ? "\(text) \(unit.symbol)" : text
     }
 
+    // MARK: - Numeri
+
     /// Intero con separatore delle migliaia all'italiana ("12.480", "980").
     public static func groupedInteger(_ value: Double) -> String {
-        let negative = value < 0
-        var digits = String(Int(abs(value).rounded()))
-        var groups: [String] = []
-        while digits.count > 3 {
-            groups.insert(String(digits.suffix(3)), at: 0)
-            digits.removeLast(3)
-        }
-        groups.insert(digits, at: 0)
-        return (negative ? "-" : "") + groups.joined(separator: ".")
+        ItalianNumberFormat.integer(value)
+    }
+
+    /// Conteggio con separatore delle migliaia ("1.324 esercizi").
+    public static func integer(_ value: Int) -> String {
+        ItalianNumberFormat.integer(value)
+    }
+
+    /// Numero con al più una cifra decimale, virgola italiana ("12,5", "8").
+    ///
+    /// Senza separatore delle migliaia: è il formato dei valori "singoli"
+    /// (RPE, misure corporee, megabyte) che possono finire accanto a un campo.
+    public static func decimal(_ value: Double, fractionDigits: Int = 1) -> String {
+        ItalianNumberFormat.number(value, fractionDigits: fractionDigits, grouping: false)
     }
 
     // MARK: - Durate
@@ -68,6 +88,21 @@ public enum Formatters {
     /// Cronometro da un intervallo (durata di una sessione in corso).
     public static func clock(_ interval: TimeInterval) -> String {
         clock(seconds: Int(interval.rounded()))
+    }
+
+    /// Secondi come li scrive la UI sotto il minuto: "45 s".
+    public static func seconds(_ value: Int) -> String {
+        "\(max(0, value)) s"
+    }
+
+    /// Durata breve di una serie o di un recupero: "45 s" sotto il minuto, "1:30" sopra.
+    ///
+    /// Unico formato per tutti i tempi "corti" dell'app (obiettivo a tempo,
+    /// recupero della scheda, recupero predefinito): la regola sta in
+    /// ``GymCore/SetMeasure/formatDuration(_:)``, qui c'è solo la soglia.
+    public static func shortDuration(seconds value: Int) -> String {
+        let total = max(0, value)
+        return total < 60 ? seconds(total) : SetMeasure.formatDuration(total)
     }
 
     /// Durata discorsiva e corta: "45 min", "1 h 05 min", "< 1 min".
@@ -141,19 +176,19 @@ public enum Formatters {
         "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre",
     ]
 
-    // MARK: - Numeri
+    // MARK: - Compatibilità
 
-    /// Sostituisce il punto decimale con la virgola italiana.
+    /// **Deprecata.** Non fa più niente: restituisce il testo invariato.
     ///
-    /// ``WeightUnit/format(kilograms:fractionDigits:includeSymbol:)`` produce sempre
-    /// il punto per restare stabile fra dispositivi e backup: la conversione alla
-    /// virgola è quindi una scelta di sola presentazione e vive solo qui.
+    /// Serviva quando GymCore produceva il punto decimale. Ora ogni testo numerico
+    /// arriva già all'italiana da ``ItalianNumberFormat``, e sostituire i punti
+    /// sarebbe **dannoso**: rovinerebbe il separatore delle migliaia ("12.480 kg"
+    /// diventerebbe "12,480 kg"). Resta come no-op solo per non rompere i richiami
+    /// esistenti; va tolta (con le sue chiamate) appena possibile.
+    ///
+    /// Non è marcata `@available(deprecated:)` di proposito: farebbe comparire dei
+    /// warning nei file di un'altra feature, e la build deve restare senza warning.
     public static func italianDecimals(_ text: String) -> String {
-        text.replacingOccurrences(of: ".", with: ",")
-    }
-
-    /// Numero con al più una cifra decimale, virgola italiana ("12,5", "8").
-    public static func decimal(_ value: Double, fractionDigits: Int = 1) -> String {
-        italianDecimals(WeightUnit.trimmedNumber(value, fractionDigits: fractionDigits))
+        text
     }
 }

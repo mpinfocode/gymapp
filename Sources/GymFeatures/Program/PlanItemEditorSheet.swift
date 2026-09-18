@@ -220,10 +220,49 @@ public struct PlanItemEditorSheet: View {
                 Text(app.unit.symbol)
                     .font(.captionText)
                     .foregroundStyle(Theme.textSecondary)
-                Spacer(minLength: 0)
+
+                Spacer(minLength: Theme.Spacing.s)
+
+                ProgramStepperButton(
+                    systemImage: "minus",
+                    label: "Riduci: carico previsto",
+                    isEnabled: previousWeight(item) != nil
+                ) {
+                    guard let value = previousWeight(item) else { return }
+                    update { $0.targetWeightKg = value }
+                }
+
+                ProgramStepperButton(
+                    systemImage: "plus",
+                    label: "Aumenta: carico previsto",
+                    isEnabled: nextWeight(item) != nil
+                ) {
+                    guard let value = nextWeight(item) else { return }
+                    update { $0.targetWeightKg = value }
+                }
             }
             .frame(minHeight: Theme.Size.minTapTarget)
         }
+    }
+
+    /// Attrezzo dell'esercizio, per il passo di carico. Vuoto se l'esercizio non
+    /// si risolve (libreria non pronta, esercizio rimosso): ``WeightStep`` ricade
+    /// allora sul passo generico di 2,5 kg.
+    private func equipment(of item: PlanItem) -> String {
+        app.store.exercise(id: item.exerciseID)?.equipment ?? ""
+    }
+
+    /// Carico al passo successivo dell'attrezzo (manubri +2, bilanciere +2,5,
+    /// macchine +5). Da vuoto parte dal primo passo utile.
+    private func nextWeight(_ item: PlanItem) -> Double? {
+        WeightStep.next(after: item.targetWeightKg ?? 0, forEquipment: equipment(of: item))
+    }
+
+    /// Carico al passo precedente: `nil` a campo vuoto, sotto lo zero o sugli
+    /// attrezzi che non si caricano (corpo libero, elastici).
+    private func previousWeight(_ item: PlanItem) -> Double? {
+        guard let current = item.targetWeightKg else { return nil }
+        return WeightStep.previous(before: current, forEquipment: equipment(of: item))
     }
 
     // MARK: - Recupero

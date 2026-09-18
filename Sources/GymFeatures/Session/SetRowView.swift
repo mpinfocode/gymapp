@@ -145,7 +145,7 @@ struct SetRowView: View {
     private var metaText: String {
         var parts: [String] = []
         if let kinds = app.store.liveRecords[setID], !kinds.isEmpty { parts.append("Record") }
-        if let rpe = currentSet?.rpe { parts.append("RPE \(Formatters.decimal(rpe))") }
+        if let rpe = currentSet?.rpe { parts.append("RPE \(ItalianNumberFormat.number(rpe))") }
         return parts.joined(separator: " · ")
     }
 
@@ -168,6 +168,7 @@ struct SetRowView: View {
             get: { currentSet?.weightKg },
             set: { newValue in
                 app.store.updateSet(id: setID, inEntry: entryID) { $0.weightKg = newValue }
+                refreshRecordsIfCompleted()
             }
         )
     }
@@ -177,8 +178,16 @@ struct SetRowView: View {
             get: { currentSet?.reps },
             set: { newValue in
                 app.store.updateSet(id: setID, inEntry: entryID) { $0.reps = newValue }
+                refreshRecordsIfCompleted()
             }
         )
+    }
+
+    /// Correggere i numeri di una serie **già spuntata** sposta i record: lo store
+    /// li ricalcola solo alla spunta, quindi qui si richiede il ricalcolo a mano.
+    private func refreshRecordsIfCompleted() {
+        guard isCompleted else { return }
+        app.store.rebuildLiveRecords()
     }
 
     private var durationBinding: Binding<Int?> {

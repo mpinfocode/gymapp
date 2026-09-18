@@ -97,7 +97,7 @@ public struct SetOptionsSheet: View {
                     app.store.updateSet(id: setID, inEntry: entryID) { $0.rpe = nil }
                 }
                 ForEach(SetLog.rpeScale, id: \.self) { value in
-                    FilterChip(Formatters.decimal(value), isSelected: currentRPE == value) {
+                    FilterChip(ItalianNumberFormat.number(value), isSelected: currentRPE == value) {
                         app.store.updateSet(id: setID, inEntry: entryID) { $0.rpe = value }
                     }
                 }

@@ -39,23 +39,17 @@ enum SessionPresentation {
 
     // MARK: - Colonna PRECEDENTE
 
-    /// Testo della colonna PRECEDENTE ("80 × 8", "45 s"); ``Formatters/missing`` se non c'è storico.
+    /// Testo della colonna PRECEDENTE; ``Formatters/missing`` se non c'è storico.
+    ///
+    /// Il testo lo compone GymCore (``Stats/PreviousPerformance/text(forSetAt:unit:)``),
+    /// che copre tutti i casi con la virgola italiana: `"82,5 × 10"` con carico,
+    /// `"12 rip."` a corpo libero, `"45s"` a tempo, `"10 × 45s"` a tempo con zavorra.
     static func previousText(
         _ previous: Stats.PreviousPerformance?,
         position: Int,
-        kind: MeasureKind,
         unit: WeightUnit
     ) -> String {
-        guard let previous, !previous.sets.isEmpty else { return Formatters.missing }
-        let set = previous.sets.indices.contains(position) ? previous.sets[position] : previous.sets[previous.sets.count - 1]
-        switch kind {
-        case .reps:
-            guard let weight = set.weightKg, let reps = set.reps else { return Formatters.missing }
-            return "\(Formatters.weight(weight, unit: unit, includeSymbol: false)) × \(reps)"
-        case .duration:
-            guard let seconds = set.durationSec else { return Formatters.missing }
-            return SetMeasure.formatDuration(seconds)
-        }
+        previous?.text(forSetAt: position, unit: unit) ?? Formatters.missing
     }
 
     // MARK: - Riga obiettivo della scheda
@@ -77,12 +71,68 @@ enum SessionPresentation {
         if sets > 0 { parts.append("\(sets) × \(measureText)") }
 
         if let weight = item?.targetWeightKg {
-            parts.append(Formatters.weight(weight, unit: unit))
+            parts.append(unit.format(kilograms: weight))
         }
         if entry.restSeconds > 0 {
             parts.append("\(entry.restSeconds) s")
         }
         return parts.joined(separator: " · ")
+    }
+
+    // MARK: - Hint di progressione
+
+    /// Suggerimento di progressione pronto da mostrare e da applicare con un tocco.
+    ///
+    /// Il testo è quello di GymCore (``Stats/ProgressionSuggestion/reason``), già in
+    /// italiano e con la virgola decimale: qui non si riscrive nulla.
+    struct ProgressionHint: Sendable, Hashable {
+        /// Riga da mostrare.
+        let text: String
+        /// Serie ancora da fare su cui il tocco scrive il suggerimento.
+        let setIDs: [UUID]
+        /// Carico da applicare, `nil` se si progredisce a ripetizioni.
+        let weightKg: Double?
+        /// Ripetizioni da applicare, `nil` se si progredisce a carico.
+        let reps: Int?
+    }
+
+    /// Hint per un esercizio, oppure `nil` se non c'è niente da proporre.
+    ///
+    /// Sparisce da solo quando il suggerimento è **già applicato** a tutte le serie
+    /// ancora aperte (o quando non ne resta nessuna): così dopo il tocco la riga
+    /// se ne va e la card torna pulita.
+    static func progressionHint(
+        _ suggestion: Stats.ProgressionSuggestion?,
+        entry: SessionEntry
+    ) -> ProgressionHint? {
+        guard let suggestion else { return nil }
+
+        let pending = entry.sets.filter { !$0.isCompleted && $0.kind.countsTowardVolume }
+        guard !pending.isEmpty else { return nil }
+
+        switch suggestion.kind {
+        case .weight:
+            let target = suggestion.suggestedWeightKg
+            guard target > 0 else { return nil }
+            let missing = pending.filter { ($0.weightKg ?? 0) < target }
+            guard !missing.isEmpty else { return nil }
+            return ProgressionHint(
+                text: suggestion.reason,
+                setIDs: missing.map(\.id),
+                weightKg: target,
+                reps: nil
+            )
+        case .reps:
+            guard let target = suggestion.suggestedReps, target > 0 else { return nil }
+            let missing = pending.filter { ($0.reps ?? 0) < target }
+            guard !missing.isEmpty else { return nil }
+            return ProgressionHint(
+                text: suggestion.reason,
+                setIDs: missing.map(\.id),
+                weightKg: nil,
+                reps: target
+            )
+        }
     }
 
     // MARK: - Avanzamento

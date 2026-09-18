@@ -253,8 +253,11 @@ public struct TodayScreen: View {
     private var weeklyNumbers: some View {
         let summary = app.store.currentWeekSummary()
         return HStack(alignment: .top, spacing: Theme.Spacing.l) {
-            number("\(summary.workouts)", label: summary.workouts == 1 ? "allenamento" : "allenamenti")
-            number("\(summary.minutes)", label: "minuti")
+            number(
+                Formatters.integer(summary.workouts),
+                label: summary.workouts == 1 ? "allenamento" : "allenamenti"
+            )
+            number(Formatters.integer(summary.minutes), label: "minuti")
             number(
                 Formatters.volume(summary.volumeKg, unit: app.unit, includeSymbol: false),
                 label: "\(app.unit.symbol) di volume"

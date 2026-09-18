@@ -27,17 +27,41 @@ public struct SessionSummaryScreen: View {
 
     public var body: some View {
         ZStack {
-            Theme.background
-            BlobGradient(seed: seed, intensity: 0.3)
-            // Velo appena accennato: i pastello restano visibili ma le etichette
-            // piccole mantengono il contrasto.
-            Theme.background.opacity(0.3)
+            background
             content
         }
         .ignoresSafeArea()
         .immersiveDark()
         .keyboardDoneToolbar()
         .onAppear(perform: loadNote)
+    }
+
+    /// Alone della scheda in alto su fondo quasi nero.
+    ///
+    /// A tutta pagina il gradiente scuro si spalma e diventa una tinta unica spenta:
+    /// tenuto a una fascia alta e dissolto verso il basso resta una macchia pastello
+    /// pulita, e sotto il nero pieno lascia respirare i numeri. Per questo l'intensità
+    /// sale (il colore è più vivo dove si vede) mentre il velo piatto sparisce: non
+    /// serve più al contrasto e toglieva solo saturazione.
+    private var background: some View {
+        ZStack(alignment: .top) {
+            Theme.background
+            BlobGradient(seed: seed, intensity: 0.85)
+                .frame(height: 360)
+                .mask(
+                    LinearGradient(
+                        colors: [
+                            Theme.textPrimary,
+                            Theme.textPrimary.opacity(0.35),
+                            Theme.textPrimary.opacity(0),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .opacity(0.95)
+        }
+        .accessibilityHidden(true)
     }
 
     private var content: some View {
@@ -50,7 +74,7 @@ public struct SessionSummaryScreen: View {
                     VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
                         stat("DURATA", value: durationText, unit: "min")
                         stat("VOLUME", value: volumeText, unit: app.unit.symbol)
-                        stat("SERIE", value: "\(session?.completedSets ?? 0)", unit: nil)
+                        stat("SERIE", value: ItalianNumberFormat.integer(session?.completedSets ?? 0), unit: nil)
                     }
 
                     if !records.isEmpty {
@@ -139,12 +163,13 @@ public struct SessionSummaryScreen: View {
     private var durationText: String {
         guard let session else { return Formatters.missing }
         let interval = session.isActive ? session.elapsed(asOf: app.now) : session.duration
-        return "\(max(0, Int(interval.rounded()) / 60))"
+        return ItalianNumberFormat.integer(max(0, Int(interval.rounded()) / 60))
     }
 
+    /// Volume nell'unità scelta, con le migliaia separate all'italiana ("10.500").
     private var volumeText: String {
         guard let session else { return Formatters.missing }
-        return Formatters.volume(session.totalVolumeKg, unit: app.unit, includeSymbol: false)
+        return ItalianNumberFormat.integer(app.unit.value(fromKilograms: session.totalVolumeKg))
     }
 
     /// Al massimo cinque righe: il riepilogo resta una schermata calma.

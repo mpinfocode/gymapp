@@ -80,7 +80,7 @@ enum ExerciseBrowseFormat {
 
     /// Conteggio discreto sotto i chip: "1.324 esercizi", "1 esercizio".
     static func resultsText(_ count: Int) -> String {
-        count == 1 ? "1 esercizio" : "\(Formatters.groupedInteger(Double(count))) esercizi"
+        count == 1 ? "1 esercizio" : "\(Formatters.integer(count)) esercizi"
     }
 
     /// Esercizi aperti di recente, nell'ordine in cui sono stati visti.
@@ -133,7 +133,7 @@ enum PlanDefaults {
             let range = min == max ? "\(min)" : "\(min)-\(max)"
             return "\(sets) · \(range) ripetizioni"
         case .duration(let seconds):
-            return "\(sets) · \(SetMeasure.formatDuration(seconds))"
+            return "\(sets) · \(Formatters.shortDuration(seconds: seconds))"
         }
     }
 

@@ -129,11 +129,7 @@ struct SessionExerciseCard: View {
             }
 
             if let hint {
-                Text(hint)
-                    .font(.captionText)
-                    .foregroundStyle(Theme.accent.deep)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                hintRow(hint)
             }
 
             SetTableHeader(measureKind: entry.measureKind)
@@ -170,6 +166,43 @@ struct SessionExerciseCard: View {
             }
             .buttonStyle(.plain)
         }
+    }
+
+    // MARK: - Hint di progressione
+
+    /// Una riga sola, discreta: il testo arriva già pronto da GymCore e il tocco
+    /// scrive il suggerimento sulle serie ancora da fare.
+    private func hintRow(_ hint: SessionPresentation.ProgressionHint) -> some View {
+        Button {
+            apply(hint)
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.xs) {
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(hint.text)
+                    .font(.captionText)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+            }
+            .foregroundStyle(Theme.accent.deep)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minHeight: Theme.Size.minTapTarget, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(hint.text))
+        .accessibilityHint(Text("Applica il suggerimento alle serie da fare"))
+    }
+
+    private func apply(_ hint: SessionPresentation.ProgressionHint) {
+        for setID in hint.setIDs {
+            app.store.updateSet(id: setID, inEntry: entry.id) { log in
+                if let weightKg = hint.weightKg { log.weightKg = weightKg }
+                if let reps = hint.reps { log.reps = reps }
+            }
+        }
+        Haptics.play(.light)
     }
 
     // MARK: - Dati derivati
@@ -224,21 +257,34 @@ struct SessionExerciseCard: View {
         return SessionPresentation.previousText(
             previous,
             position: SessionPresentation.workingPosition(of: set.id, in: entry),
-            kind: entry.measureKind,
             unit: app.unit
         )
     }
 
-    /// Hint di progressione: una riga discreta, solo se lo store lo propone.
+    /// Hint di progressione: una riga discreta, solo se lo store lo propone e il
+    /// suggerimento non è già applicato (carico o ripetizioni, vedi `kind`).
+    private var hint: SessionPresentation.ProgressionHint? {
+        guard let planItem else { return nil }
+        return SessionPresentation.progressionHint(suggestion(for: planItem), entry: entry)
+    }
+
+    /// Suggerimento di progressione per una voce della scheda.
     ///
-    /// Il testo viene riscritto qui perché `reason` di GymCore usa il punto
-    /// decimale, mentre la UI vuole la virgola italiana.
-    private var hint: String? {
-        guard let planItem,
-              let suggestion = app.store.progressionSuggestion(for: planItem) else { return nil }
-        // Due decimali: gli incrementi da 1,25 kg dei manubri devono restare esatti.
-        let value = Formatters.decimal(app.unit.value(fromKilograms: suggestion.suggestedWeightKg), fractionDigits: 2)
-        return "Ultima volta hai chiuso tutte le serie: prova \(value) \(app.unit.symbol)."
+    /// Di norma lo dà lo store. A corpo libero però `AppStore.progressionSuggestion`
+    /// cerca l'ultima sessione fra quelle con serie **di lavoro**, che escludono le
+    /// serie senza carico: lì non trova mai nulla. In quel caso l'ultima sessione si
+    /// prende dalle serie registrate (``Stats/loggedSets(for:in:)``) e si chiede il
+    /// suggerimento direttamente a `Stats`, con la stessa API pubblica.
+    private func suggestion(for planItem: PlanItem) -> Stats.ProgressionSuggestion? {
+        if let fromStore = app.store.progressionSuggestion(for: planItem) { return fromStore }
+        let last = app.store.sessions
+            .filter { !Stats.loggedSets(for: planItem.exerciseID, in: $0).isEmpty }
+            .max { $0.startedAt < $1.startedAt }
+        return Stats.progressionSuggestion(
+            for: planItem,
+            lastSession: last,
+            equipment: exercise?.equipment ?? ""
+        )
     }
 }
 

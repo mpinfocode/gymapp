@@ -54,20 +54,56 @@ extension String {
     }
 }
 
-/// Formattazione uniforme delle metriche corporee, con la virgola italiana.
+/// Testi di un record, condivisi fra la pagina "Record" e il dettaglio di una sessione.
 ///
-/// ``BodyMetricKind/format(_:weightUnit:)`` produce il punto decimale (è pensato
-/// per restare stabile fra dispositivi): la virgola è una scelta di presentazione
-/// e vive solo qui, come in ``Formatters``.
+/// Nessuna logica nuova: ``Stats/RecordEntry`` sa già di che tipo è il primato e di
+/// quanto è migliorato, qui si decide solo come scriverlo.
+enum RecordFormat {
+
+    /// Tipo di record in minuscolo, da mettere in coda a una data ("carico record").
+    static func kindName(_ entry: Stats.RecordEntry) -> String {
+        entry.kind.displayName.lowercased()
+    }
+
+    /// Il nuovo primato ("82,5 kg", "12.480 kg" per il volume).
+    static func value(_ entry: Stats.RecordEntry, unit: WeightUnit) -> String {
+        entry.kind == .sessionVolume
+            ? Formatters.volume(entry.value, unit: unit)
+            : Formatters.weight(entry.value, unit: unit)
+    }
+
+    /// Di quanto ha battuto il primato precedente ("+2,5 kg").
+    static func improvement(_ entry: Stats.RecordEntry, unit: WeightUnit) -> String {
+        let converted = unit.value(fromKilograms: entry.improvement)
+        let number = ItalianNumberFormat.signed(
+            converted,
+            fractionDigits: entry.kind == .sessionVolume ? 0 : 1,
+            grouping: entry.kind == .sessionVolume
+        )
+        return "\(number) \(unit.symbol)"
+    }
+}
+
+/// Formattazione uniforme delle metriche corporee.
+///
+/// Qui non si normalizza più niente: ``ItalianNumberFormat`` e i formattatori di
+/// GymCore (``BodyMetricKind/format(_:weightUnit:)``, ``Stats/BodyChange/deltaText(weightUnit:)``)
+/// producono già la virgola decimale, il segno meno ASCII e la percentuale
+/// attaccata al numero. Restano solo la conversione fra unità e la scelta del
+/// simbolo, che sono decisioni di questa schermata.
 enum BodyFormat {
 
     /// Solo il numero, senza simbolo ("77,2").
     static func number(_ value: Double, metric: BodyMetricKind, unit: WeightUnit) -> String {
         switch metric.unit {
         case .kilograms:
-            return Formatters.weight(value, unit: unit, includeSymbol: false)
+            return unit.format(kilograms: value, fractionDigits: 1, includeSymbol: false)
         case .centimeters, .percent:
-            return Formatters.decimal(value, fractionDigits: metric.unit.fractionDigits)
+            return ItalianNumberFormat.number(
+                value,
+                fractionDigits: metric.unit.fractionDigits,
+                grouping: false
+            )
         }
     }
 
@@ -78,7 +114,7 @@ enum BodyFormat {
 
     /// Numero e simbolo ("77,2 kg", "16,4%").
     static func value(_ value: Double, metric: BodyMetricKind, unit: WeightUnit) -> String {
-        Formatters.italianDecimals(metric.format(value, weightUnit: unit))
+        metric.format(value, weightUnit: unit)
     }
 
     /// Valore salvato (kg per peso e composizione) convertito nell'unità mostrata.
@@ -91,10 +127,8 @@ enum BodyFormat {
         metric.unit == .kilograms ? unit.kilograms(from: displayed) : displayed
     }
 
-    /// Variazione con segno ("+1,2 kg", "-2 cm").
+    /// Variazione con segno ("+1,2 kg", "-2 cm", "-1,2%").
     static func delta(_ change: Stats.BodyChange, unit: WeightUnit) -> String {
-        let text = Formatters.italianDecimals(change.deltaText(weightUnit: unit))
-        // La percentuale si scrive attaccata al numero, come in `BodyMetricKind.format`.
-        return change.metric.unit == .percent ? text.replacingOccurrences(of: " %", with: "%") : text
+        change.deltaText(weightUnit: unit)
     }
 }

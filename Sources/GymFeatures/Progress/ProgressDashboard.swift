@@ -4,7 +4,7 @@ import GymCore
 /// Tutto ciò che serve alla griglia di Progressi, calcolato una volta sola.
 ///
 /// È un tipo di sola presentazione: nessuna logica di dominio nuova, solo
-/// composizione di ``Stats`` e di ``RecordTimeline``.
+/// composizione di ``Stats``.
 struct ProgressDashboard {
 
     /// La circonferenza che si è mossa di più: è l'unica misura mostrata in griglia.
@@ -22,7 +22,7 @@ struct ProgressDashboard {
     let weightSeries: [Stats.BodyPoint]
     let measureHighlight: MeasureHighlight?
     /// Record di carico dello storico, dal più recente.
-    let recordEvents: [RecordEvent]
+    let recordEvents: [Stats.RecordEntry]
     /// Esercizi migliorati negli ultimi 30 giorni.
     let recentRecordCount: Int
     /// Esercizi migliorati per mese negli ultimi 6 mesi, dal più vecchio.
@@ -50,7 +50,7 @@ struct ProgressDashboard {
         let summaries = store.weeklySummaries()
         let weeks = lastWeeks(8, endingAt: now, calendar: calendar, summaries: summaries)
         let reference = store.activeProgram?.startDate ?? .distantPast
-        let events = RecordTimeline.events(in: store.sessions)
+        let events = Stats.recordHistory(in: store.sessions)
         let monthAgo = calendar.date(byAdding: .day, value: -30, to: now) ?? now
 
         return ProgressDashboard(
@@ -59,7 +59,7 @@ struct ProgressDashboard {
             weightSeries: store.bodySeries(of: .weight),
             measureHighlight: highlight(in: store.bodyEntries, since: reference),
             recordEvents: events,
-            recentRecordCount: RecordTimeline.latestPerExercise(events.filter { $0.date >= monthAgo }).count,
+            recentRecordCount: Stats.latestPerExercise(events.filter { $0.date >= monthAgo }).count,
             recordsByMonth: recordsByMonth(events, months: 6, endingAt: now, calendar: calendar),
             weekMuscleGroups: (weeks.last?.muscleGroupBreakdown ?? []).filter { $0.count > 0 },
             sessionCount: store.sessions.count
@@ -107,7 +107,7 @@ struct ProgressDashboard {
 
     /// Esercizi migliorati per mese, dal più vecchio al più recente.
     static func recordsByMonth(
-        _ events: [RecordEvent],
+        _ events: [Stats.RecordEntry],
         months: Int,
         endingAt date: Date,
         calendar: Calendar
@@ -119,7 +119,7 @@ struct ProgressDashboard {
             guard let start = calendar.date(byAdding: .month, value: -offset, to: current),
                   let end = calendar.date(byAdding: .month, value: 1, to: start) else { return 0 }
             let inMonth = events.filter { $0.date >= start && $0.date < end }
-            return Double(RecordTimeline.latestPerExercise(inMonth).count)
+            return Double(Stats.latestPerExercise(inMonth).count)
         }
     }
 }

@@ -46,15 +46,28 @@ public struct RootView: View {
                     AppShell()
                         .environment(environment)
                 case .loading:
-                    LaunchView(message: nil)
+                    LaunchView()
                 case .failed(let reason):
-                    LaunchView(message: reason)
+                    LaunchView(title: "Libreria non disponibile", message: reason) {
+                        await environment.retryLibrary()
+                    }
+                }
+            } else if let bootFailure {
+                LaunchView(title: "Dati non leggibili", message: bootFailure) {
+                    await retryBootstrap()
                 }
             } else {
-                LaunchView(message: bootFailure)
+                LaunchView()
             }
         }
         .task { await bootstrap() }
+    }
+
+    /// Azione "Riprova" quando è fallita la creazione dell'ambiente: si ricomincia
+    /// da capo, togliendo prima il messaggio precedente.
+    private func retryBootstrap() async {
+        bootFailure = nil
+        await bootstrap()
     }
 
     private func bootstrap() async {
@@ -78,29 +91,51 @@ public struct RootView: View {
 }
 
 /// Schermata di avvio: solo il nome dell'app su sfondo bianco puro.
-/// Se il caricamento fallisce mostra il motivo, senza drammi e senza azioni finte.
+///
+/// Se il caricamento fallisce non resta un vicolo cieco: il motivo compare in uno
+/// stato vuoto con la sua azione "Riprova" (regola di DESIGN: uno stato vuoto ha
+/// sempre un'azione). Il tentativo in corso disabilita il bottone invece di
+/// sostituire tutto con uno spinner, così il testo non salta sotto le dita.
 private struct LaunchView: View {
 
-    let message: String?
+    var title: String = ""
+    var message: String?
+    /// Azione "Riprova"; `nil` durante il caricamento normale.
+    var retry: (@Sendable () async -> Void)?
+
+    @State private var isRetrying = false
 
     var body: some View {
         ZStack {
             PageBackground()
 
-            VStack(spacing: Theme.Spacing.m) {
+            VStack(spacing: Theme.Spacing.xl) {
                 Text("GymApp")
                     .font(.greeting)
                     .foregroundStyle(Theme.textPrimary)
                     .accessibilityAddTraits(.isHeader)
 
                 if let message {
-                    Text(message)
-                        .font(.captionText)
-                        .foregroundStyle(Theme.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, Theme.Spacing.xxxl)
+                    EmptyStateView(
+                        systemImage: "exclamationmark.circle",
+                        title: title,
+                        message: message,
+                        actionTitle: retry == nil ? nil : (isRetrying ? "Caricamento" : "Riprova"),
+                        action: retry == nil ? nil : { startRetry() }
+                    )
+                    .disabled(isRetrying)
                 }
             }
+            .padding(.horizontal, Theme.Spacing.page)
+        }
+    }
+
+    private func startRetry() {
+        guard let retry, !isRetrying else { return }
+        isRetrying = true
+        Task {
+            await retry()
+            isRetrying = false
         }
     }
 }

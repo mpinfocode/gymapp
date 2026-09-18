@@ -92,11 +92,11 @@ enum SessionMock {
         let end = now.addingTimeInterval(TimeInterval(-lastSetSecondsAgo))
         for (position, target) in targets.enumerated() {
             let item = day.items.first { $0.id == target.entry.planItemID }
-            let weight = baseWeight(target.entry.exerciseID) + 10
+            let weight = loadedWeight(for: target.entry.exerciseID, in: store, base: baseWeight(target.entry.exerciseID) + 10)
             store.updateSet(id: target.set.id, inEntry: target.entry.id) { log in
                 switch target.entry.measureKind {
                 case .reps:
-                    log.weightKg = target.set.kind == .warmup ? (weight * 0.6).rounded() : weight
+                    log.weightKg = weight.map { target.set.kind == .warmup ? ($0 * 0.6).rounded() : $0 }
                     log.reps = max(6, (item?.measure.repsRange?.upperBound ?? 10) - position % 3)
                 case .duration:
                     log.durationSec = item?.measure.durationSeconds ?? 45
@@ -139,12 +139,12 @@ enum SessionMock {
 
         for entry in session.entries {
             let item = day.items.first { $0.id == entry.planItemID }
-            let weight = baseWeight(entry.exerciseID) + bump
+            let weight = loadedWeight(for: entry.exerciseID, in: store, base: baseWeight(entry.exerciseID) + bump)
             for set in entry.sets {
                 store.updateSet(id: set.id, inEntry: entry.id) { log in
                     switch entry.measureKind {
                     case .reps:
-                        log.weightKg = set.kind == .warmup ? (weight * 0.6).rounded() : weight
+                        log.weightKg = weight.map { set.kind == .warmup ? ($0 * 0.6).rounded() : $0 }
                         log.reps = item?.measure.repsRange?.upperBound ?? 10
                     case .duration:
                         log.durationSec = item?.measure.durationSeconds ?? 45
@@ -156,6 +156,14 @@ enum SessionMock {
         }
         clock.date = start.addingTimeInterval(60 * 60)
         _ = store.finishSession()
+    }
+
+    /// Carico da registrare, `nil` dove il carico non si regola (corpo libero,
+    /// elastici): lì le serie restano senza kg, come in palestra.
+    private static func loadedWeight(for exerciseID: String, in store: AppStore, base: Double) -> Double? {
+        let equipment = store.exercise(id: exerciseID)?.equipment ?? ""
+        guard !WeightStep.progressesByReps(forEquipment: equipment) else { return nil }
+        return base
     }
 
     /// Carico di partenza plausibile e stabile, derivato dall'id del dataset.

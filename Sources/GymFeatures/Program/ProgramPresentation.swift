@@ -34,9 +34,10 @@ enum ProgramPresentation {
 
     // MARK: - Voci di piano
 
-    /// Secondi come li scrive la UI: "90 s".
+    /// Tempi brevi (durata di una serie, recupero): "45 s", "1:30".
+    /// Il formato è uno solo per tutta l'app, sta in ``Formatters/shortDuration(seconds:)``.
     static func seconds(_ value: Int) -> String {
-        "\(max(0, value)) s"
+        Formatters.shortDuration(seconds: value)
     }
 
     /// Obiettivo della serie: "8-12", "10", "45 s", "1:30".
@@ -45,7 +46,7 @@ enum ProgramPresentation {
         case .reps:
             return measure.displayText
         case .duration(let total):
-            return total < 60 ? seconds(total) : SetMeasure.formatDuration(total)
+            return seconds(total)
         }
     }
 

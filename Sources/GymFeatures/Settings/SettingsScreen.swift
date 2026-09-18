@@ -107,7 +107,7 @@ public struct SettingsScreen: View {
 
                 SettingsRow(title: "Recupero predefinito") {
                     SettingsStepper(
-                        value: SetMeasure.formatDuration(app.store.settings.defaultRestSeconds),
+                        value: Formatters.shortDuration(seconds: app.store.settings.defaultRestSeconds),
                         canDecrease: app.store.settings.defaultRestSeconds > 15,
                         canIncrease: app.store.settings.defaultRestSeconds < 600,
                         decreaseLabel: "Riduci di 15 secondi",
