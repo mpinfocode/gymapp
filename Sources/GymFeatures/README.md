@@ -103,6 +103,12 @@ l'utente può continuare a navigare. Terminare davvero la sessione è
 `store.finishSession()` (oppure `store.discardSession()`), e da lì si apre
 `SessionSummaryScreen`.
 
+Nessuna schermata presenta la sessione da sé: per avviarla basta chiamare lo store
+(`store.startSession(programID:dayID:)`, `startTodaysSession()`, `startFreeSession()`)
+e la cover compare da sola. Lo stato "minimizzata" vive nel `Router`
+(`router.isSessionMinimized`): un bottone "Riprendi" chiama `app.router.resumeSession()`,
+chi chiude la cover chiama `router.minimizeSession()`.
+
 ## Come aggiungere una schermata
 
 1. Crea il file nella cartella della sua feature.

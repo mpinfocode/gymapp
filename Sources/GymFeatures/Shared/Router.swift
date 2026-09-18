@@ -27,12 +27,29 @@ public final class Router {
     /// Tab attualmente selezionato.
     public var tab: AppTab = .today
 
+    /// La cover della sessione è stata chiusa senza terminare l'allenamento:
+    /// la shell mostra la barra "Riprendi allenamento" sopra la tab bar.
+    ///
+    /// Nessuna schermata deve presentare la sessione da sé: avviarla nello store
+    /// basta, la cover la apre ``RootView``.
+    public private(set) var isSessionMinimized = false
+
     public var todayPath: [AppRoute] = []
     public var exercisesPath: [AppRoute] = []
     public var programPath: [AppRoute] = []
     public var progressPath: [AppRoute] = []
 
     public init() {}
+
+    /// Riporta a schermo intero la sessione in corso (bottone "Riprendi").
+    public func resumeSession() {
+        isSessionMinimized = false
+    }
+
+    /// Chiude la cover senza terminare l'allenamento.
+    public func minimizeSession() {
+        isSessionMinimized = true
+    }
 
     /// Apre il dettaglio di un esercizio nel tab Esercizi, da qualunque punto dell'app.
     public func openExercise(id: String) {

@@ -43,7 +43,7 @@ public struct RootView: View {
             if let environment {
                 switch environment.phase {
                 case .ready:
-                    AppShell(startsMinimized: sessionMinimized)
+                    AppShell()
                         .environment(environment)
                 case .loading:
                     LaunchView(message: nil)
@@ -63,6 +63,7 @@ public struct RootView: View {
             if provided.phase == .loading { await provided.start() }
             environment = provided
             provided.router.tab = initialTab
+            if sessionMinimized { provided.router.minimizeSession() }
             return
         }
         do {
@@ -111,13 +112,6 @@ private struct AppShell: View {
     @Environment(AppEnvironment.self) private var app
     @Environment(\.scenePhase) private var scenePhase
 
-    /// L'utente ha chiuso la cover pur avendo una sessione in corso.
-    @State private var isSessionMinimized: Bool
-
-    init(startsMinimized: Bool = false) {
-        _isSessionMinimized = State(initialValue: startsMinimized)
-    }
-
     var body: some View {
         @Bindable var router = app.router
 
@@ -133,11 +127,11 @@ private struct AppShell: View {
         }
         .safeAreaInset(edge: .bottom) { bottomBar }
         .sessionCover(isPresented: sessionCoverBinding) {
-            ActiveSessionScreen(onMinimize: { isSessionMinimized = true })
+            ActiveSessionScreen(onMinimize: { app.router.minimizeSession() })
         }
         .onChange(of: app.store.activeSession?.id) { _, _ in
             // Una sessione appena avviata (o chiusa) riparte sempre non minimizzata.
-            isSessionMinimized = false
+            app.router.resumeSession()
         }
         .onChange(of: app.store.settings.hapticsEnabled, initial: true) { _, enabled in
             Haptics.isEnabled = enabled
@@ -179,7 +173,7 @@ private struct AppShell: View {
         @Bindable var router = app.router
 
         return VStack(spacing: Theme.Spacing.s) {
-            if app.store.activeSession != nil, isSessionMinimized {
+            if app.store.activeSession != nil, app.router.isSessionMinimized {
                 resumeBar
             }
             FloatingTabBar(items: AppTab.tabItems, selection: $router.tab)
@@ -190,7 +184,7 @@ private struct AppShell: View {
 
     private var resumeBar: some View {
         Button {
-            isSessionMinimized = false
+            app.router.resumeSession()
         } label: {
             HStack(spacing: Theme.Spacing.m) {
                 Text("Riprendi allenamento")
@@ -215,8 +209,8 @@ private struct AppShell: View {
     /// Chiuderla non termina la sessione: la minimizza e fa comparire la barra sopra la tab bar.
     private var sessionCoverBinding: Binding<Bool> {
         Binding(
-            get: { app.store.activeSession != nil && !isSessionMinimized },
-            set: { isOpen in if !isOpen { isSessionMinimized = true } }
+            get: { app.store.activeSession != nil && !app.router.isSessionMinimized },
+            set: { isOpen in if !isOpen { app.router.minimizeSession() } }
         )
     }
 }

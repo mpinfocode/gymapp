@@ -18,6 +18,26 @@ func makeScenes(full: AppEnvironment, empty: AppEnvironment, running: AppEnviron
     let sessionID = full.store.sessions.first?.id ?? UUID()
     let exerciseID = SampleProgram.exerciseIDs.first ?? "0025"
 
+    // Sessione: quattro momenti costruiti al secondo (vedi MockData+Session.swift).
+    let library = full.store.exercises
+    let sessionStart = SessionMock.environment(
+        repository: library, dayIndex: 0, completedEntries: 0, partialSets: 0,
+        lastSetSecondsAgo: 0, elapsedMinutes: 1
+    )
+    let sessionMid = SessionMock.environment(
+        repository: library, dayIndex: 0, completedEntries: 2, partialSets: 2,
+        lastSetSecondsAgo: 44
+    )
+    let sessionSuperset = SessionMock.environment(
+        repository: library, dayIndex: 0, completedEntries: 3, partialSets: 0,
+        lastSetSecondsAgo: 900, elapsedMinutes: 46
+    )
+    let sessionDuration = SessionMock.environment(
+        repository: library, dayIndex: 2, completedEntries: 5, partialSets: 0,
+        lastSetSecondsAgo: 900, elapsedMinutes: 52
+    )
+    let pendingSet = SessionMock.firstPendingSet(in: sessionMid)
+
     return [
         // Shell completa: i quattro tab, stato pieno.
         SnapshotScene("root-oggi", height: deviceHeight, settle: 2.5,
@@ -46,20 +66,83 @@ func makeScenes(full: AppEnvironment, empty: AppEnvironment, running: AppEnviron
         // Schermate singole, rese alte per vedere tutta la pagina.
         SnapshotScene("oggi", view: screen(TodayScreen(), in: full)),
         SnapshotScene("oggi-vuoto", view: screen(TodayScreen(), in: empty)),
-        SnapshotScene("esercizi", view: screen(ExercisesScreen(), in: full)),
-        SnapshotScene("esercizi-dettaglio", view: screen(ExerciseDetailScreen(exerciseID: exerciseID), in: full)),
-        SnapshotScene("esercizi-picker", view: screen(
-            ExercisePickerSheet(title: "Aggiungi esercizi", allowsMultipleSelection: true, excludedIDs: [], onPick: { _ in }),
+        SnapshotScene("oggi-scuro", dark: true, view: screen(TodayScreen(), in: full)),
+        SnapshotScene("oggi-riposo", settle: 5, view: TodayVariantScene(variant: .rest)),
+        SnapshotScene("oggi-completato", settle: 5, view: TodayVariantScene(variant: .completed)),
+        SnapshotScene("oggi-in-scadenza", settle: 5, view: TodayVariantScene(variant: .expiring)),
+        // Esercizi: catalogo, ricerca in italiano, filtri, dettaglio, picker, personalizzati.
+        SnapshotScene("esercizi", settle: 6, view: ExercisesVariantScene(variant: .catalog)),
+        SnapshotScene("esercizi-scuro", dark: true, settle: 6, view: ExercisesVariantScene(variant: .catalog)),
+        SnapshotScene("esercizi-ricerca", settle: 5, view: screen(
+            ExercisesScreen(preset: ExerciseSearchModel(query: "panca piana")),
+            in: full
+        )),
+        SnapshotScene("esercizi-filtri", settle: 3, view: ExercisesVariantScene(variant: .filters)),
+        SnapshotScene("esercizi-nessun-risultato", settle: 3, view: screen(
+            ExercisesScreen(preset: ExerciseSearchModel(query: "panca romana")),
+            in: full
+        )),
+        SnapshotScene("esercizi-dettaglio", settle: 6, view: screen(ExerciseDetailScreen(exerciseID: "0227"), in: full)),
+        SnapshotScene("esercizi-dettaglio-progressi", settle: 6, view: screen(
+            ExerciseDetailScreen(exerciseID: exerciseID),
+            in: full
+        )),
+        SnapshotScene("esercizi-personalizzato", settle: 3, view: ExercisesVariantScene(variant: .customForm)),
+        SnapshotScene("esercizi-personalizzato-dettaglio", settle: 5, view: ExercisesVariantScene(variant: .customDetail)),
+        SnapshotScene("esercizi-picker", settle: 6, view: screen(
+            ExercisePickerSheet(title: "Aggiungi esercizi", allowsMultipleSelection: true, excludedIDs: ["0025", "0047"], onPick: { _ in }),
             in: full
         )),
         SnapshotScene("scheda", view: screen(ProgramScreen(), in: full)),
         SnapshotScene("scheda-vuota", view: screen(ProgramScreen(), in: empty)),
+        SnapshotScene("scheda-scuro", dark: true, view: screen(ProgramScreen(), in: full)),
+        SnapshotScene("scheda-giorno", height: deviceHeight, settle: 2.5,
+                      view: ProgramVariantScene(variant: .day)),
+        SnapshotScene("scheda-editor-esercizio", height: deviceHeight, settle: 2.5,
+                      view: ProgramVariantScene(variant: .item)),
+        SnapshotScene("scheda-nuova", height: deviceHeight, settle: 2.5,
+                      view: ProgramVariantScene(variant: .create)),
+        SnapshotScene("scheda-archivio", height: deviceHeight, settle: 2.5,
+                      view: ProgramVariantScene(variant: .archive)),
+        SnapshotScene("scheda-giorni-fissi", height: deviceHeight, settle: 2.5,
+                      view: ProgramVariantScene(variant: .weekdays)),
         SnapshotScene("progressi", view: screen(ProgressScreen(), in: full)),
         SnapshotScene("progressi-vuoto", view: screen(ProgressScreen(), in: empty)),
+        SnapshotScene("progressi-scuro", dark: true, view: screen(ProgressScreen(), in: full)),
         SnapshotScene("progressi-sessione", view: screen(SessionDetailScreen(sessionID: sessionID), in: full)),
-        SnapshotScene("sessione-attiva", view: screen(ActiveSessionScreen(onMinimize: {}), in: running)),
-        SnapshotScene("sessione-riepilogo", view: screen(SessionSummaryScreen(sessionID: sessionID), in: full)),
+        SnapshotScene("progressi-dettaglio-peso", view: screen(BodyMetricDetailScreen(metric: .weight), in: full)),
+        SnapshotScene("progressi-dettaglio-volume", view: screen(TrainingMetricDetailScreen(metric: .volume), in: full)),
+        SnapshotScene("progressi-misure", view: screen(BodyMeasuresScreen(), in: full)),
+        SnapshotScene("progressi-nuova-rilevazione", view: screen(BodyEntrySheet(entry: nil, defaultDate: full.now), in: full)),
+        SnapshotScene("progressi-storico", view: screen(WorkoutHistoryScreen(), in: full)),
+        SnapshotScene("progressi-record", view: screen(RecordsScreen(), in: full)),
+        // Sessione attiva: altezza reale da iPhone e versione alta per la pagina intera.
+        SnapshotScene("sessione-attiva", height: deviceHeight, settle: 2.5,
+                      view: screen(ActiveSessionScreen(onMinimize: {}), in: sessionMid)),
+        SnapshotScene("sessione-attiva-alta", height: 1700, settle: 2.5,
+                      view: screen(ActiveSessionScreen(onMinimize: {}), in: sessionMid)),
+        SnapshotScene("sessione-inizio", height: deviceHeight, settle: 2.5,
+                      view: screen(ActiveSessionScreen(onMinimize: {}), in: sessionStart)),
+        SnapshotScene("sessione-inizio-alta", height: 1700, settle: 2.5,
+                      view: screen(ActiveSessionScreen(onMinimize: {}), in: sessionStart)),
+        SnapshotScene("sessione-superset", height: deviceHeight, settle: 2.5,
+                      view: screen(ActiveSessionScreen(onMinimize: {}), in: sessionSuperset)),
+        SnapshotScene("sessione-durata", height: deviceHeight, settle: 2.5,
+                      view: screen(ActiveSessionScreen(onMinimize: {}), in: sessionDuration)),
+        SnapshotScene("sessione-menu", height: deviceHeight,
+                      view: screen(
+                        SetOptionsSheet(
+                            entryID: pendingSet?.entryID ?? UUID(),
+                            setID: pendingSet?.setID ?? UUID()
+                        ),
+                        in: sessionMid
+                      )),
+        SnapshotScene("sessione-riepilogo", height: deviceHeight,
+                      view: screen(SessionSummaryScreen(sessionID: sessionID), in: full)),
+        SnapshotScene("sessione-riepilogo-alta", height: 1400,
+                      view: screen(SessionSummaryScreen(sessionID: sessionID), in: full)),
         SnapshotScene("impostazioni", view: screen(SettingsScreen(), in: full)),
+        SnapshotScene("impostazioni-vuoto", view: screen(SettingsScreen(), in: empty)),
 
         // Design system: resta la prima verifica visiva dei componenti.
         SnapshotScene("design-system", height: 4200, settle: 4, view: GymUIGallery()),

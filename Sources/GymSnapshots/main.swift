@@ -19,6 +19,9 @@
 import AppKit
 import Foundation
 
+// Barre di scorrimento in sovrimpressione come su iOS: quelle "legacy" di macOS rubano 18pt a destra
+// quando il contenuto sborda e falsano i margini negli screenshot.
+UserDefaults.standard.set("WhenScrolling", forKey: "AppleShowScrollBars")
 let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
 
