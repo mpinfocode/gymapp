@@ -38,22 +38,30 @@ public enum WeightUnit: String, Codable, Sendable, Hashable, CaseIterable, Ident
         }
     }
 
-    /// Formatta un carico in kg nell'unità corrente, es. `"82.5 kg"`.
+    /// Formatta un carico in kg nell'unità corrente **per la UI**, es. `"82,5 kg"`.
     ///
-    /// Usa sempre il punto decimale: il formato è indipendente dalla locale e quindi
-    /// stabile fra dispositivi, backup e check automatici.
+    /// Usa la virgola decimale italiana (``ItalianNumberFormat``) e non dipende dalla
+    /// locale di sistema: il risultato è identico su iPhone, su macOS e negli screenshot.
+    /// Le migliaia non vengono separate, così il testo resta usabile anche dove serve
+    /// un numero singolo accanto a un campo di input.
+    ///
+    /// Per un numero "tecnico" con il punto decimale (log, confronti, testi non
+    /// destinati all'utente) c'è ``trimmedNumber(_:fractionDigits:)``.
     ///
     /// - Parameters:
     ///   - kilograms: valore in kg.
-    ///   - fractionDigits: cifre decimali massime (i decimali `.0` vengono omessi).
+    ///   - fractionDigits: cifre decimali massime (i decimali `,0` vengono omessi).
     ///   - includeSymbol: se includere il simbolo dell'unità.
     public func format(kilograms: Double, fractionDigits: Int = 1, includeSymbol: Bool = true) -> String {
         let converted = value(fromKilograms: kilograms)
-        let text = WeightUnit.trimmedNumber(converted, fractionDigits: fractionDigits)
+        let text = ItalianNumberFormat.number(converted, fractionDigits: fractionDigits, grouping: false)
         return includeSymbol ? "\(text) \(symbol)" : text
     }
 
     /// Numero arrotondato con gli zeri decimali finali rimossi (`12.0` → `"12"`, `12.50` → `"12.5"`).
+    ///
+    /// Formato **tecnico**, con il punto decimale: stabile fra dispositivi e build,
+    /// ma non adatto alla UI italiana (lì si usa ``ItalianNumberFormat``).
     public static func trimmedNumber(_ value: Double, fractionDigits: Int = 1) -> String {
         let digits = max(0, min(6, fractionDigits))
         var text = String(format: "%.\(digits)f", value)

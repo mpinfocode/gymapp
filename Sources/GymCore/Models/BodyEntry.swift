@@ -150,17 +150,17 @@ public enum BodyMetricKind: Codable, Sendable, Hashable, CaseIterable, Identifia
         }
     }
 
-    /// Formatta un valore con la sua unità. Per le metriche in kg rispetta
-    /// l'unità scelta dall'utente; centimetri e percentuali restano invariati.
+    /// Formatta un valore con la sua unità, in italiano (virgola decimale).
+    ///
+    /// Per le metriche in kg rispetta l'unità scelta dall'utente; centimetri e
+    /// percentuali restano invariati. La percentuale si scrive **attaccata** al
+    /// numero (`"16,4%"`), il resto con lo spazio (`"82,5 kg"`, `"83 cm"`).
     public func format(_ value: Double, weightUnit: WeightUnit = .kg) -> String {
         switch unit {
         case .kilograms:
             return weightUnit.format(kilograms: value, fractionDigits: 1)
-        case .centimeters:
-            return "\(WeightUnit.trimmedNumber(value, fractionDigits: unit.fractionDigits)) \(unit.symbol)"
-        case .percent:
-            // La percentuale si scrive attaccata al numero.
-            return "\(WeightUnit.trimmedNumber(value, fractionDigits: unit.fractionDigits))\(unit.symbol)"
+        case .centimeters, .percent:
+            return ItalianNumberFormat.measurement(value, unit: unit.symbol, fractionDigits: unit.fractionDigits)
         }
     }
 }

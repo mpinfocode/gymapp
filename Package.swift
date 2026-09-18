@@ -14,7 +14,7 @@ let package = Package(
     targets: [
         .target(name: "GymCore", resources: [.process("Resources")]),
         .target(name: "GymUI"),
-        .target(name: "GymFeatures", dependencies: ["GymCore", "GymUI"]),
+        .target(name: "GymFeatures", dependencies: ["GymCore", "GymUI"], exclude: ["README.md"]),
         .executableTarget(name: "GymChecks", dependencies: ["GymCore"]),
         // Solo macOS: rende le schermate in PNG (docs/preview, fuori da git) per la revisione visiva senza Xcode.
         .executableTarget(name: "GymSnapshots", dependencies: ["GymCore", "GymUI", "GymFeatures"]),

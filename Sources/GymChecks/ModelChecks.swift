@@ -133,9 +133,9 @@ func runModelChecks(_ h: Harness) {
         tolerance: 0.000_001
     )
     h.check("format kg intero senza decimali", WeightUnit.kg.format(kilograms: 100) == "100 kg")
-    h.check("format kg con mezzo disco", WeightUnit.kg.format(kilograms: 82.5) == "82.5 kg")
-    h.check("format senza simbolo", WeightUnit.kg.format(kilograms: 82.5, includeSymbol: false) == "82.5")
-    h.check("format lb", WeightUnit.lb.format(kilograms: 100, fractionDigits: 1) == "220.5 lb")
+    h.check("format kg con mezzo disco (virgola italiana)", WeightUnit.kg.format(kilograms: 82.5) == "82,5 kg")
+    h.check("format senza simbolo", WeightUnit.kg.format(kilograms: 82.5, includeSymbol: false) == "82,5")
+    h.check("format lb", WeightUnit.lb.format(kilograms: 100, fractionDigits: 1) == "220,5 lb")
     h.check("format arrotonda a 0 decimali", WeightUnit.kg.format(kilograms: 82.4, fractionDigits: 0) == "82 kg")
     h.check("trimmedNumber toglie gli zeri", WeightUnit.trimmedNumber(12.50) == "12.5" && WeightUnit.trimmedNumber(12.0) == "12")
     h.check("trimmedNumber evita -0", WeightUnit.trimmedNumber(-0.001) == "0")

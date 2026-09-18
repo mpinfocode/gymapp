@@ -75,45 +75,102 @@ extension Stats {
 
     // MARK: - Suggerimento di progressione
 
-    /// Proposta di aumento del carico per un esercizio.
+    /// Proposta di progressione per un esercizio: più carico oppure più ripetizioni.
     public struct ProgressionSuggestion: Sendable, Hashable {
+
+        /// Su cosa si progredisce.
+        public enum Kind: String, Sendable, Hashable, CaseIterable, Identifiable {
+            /// Si sale di carico, al passo dell'attrezzo (vedi ``WeightStep``).
+            case weight
+            /// L'attrezzo non ha un passo di carico (corpo libero, elastici):
+            /// si progredisce aggiungendo ripetizioni.
+            case reps
+
+            public var id: String { rawValue }
+        }
+
         public let exerciseID: String
-        /// Carico usato nell'ultima sessione.
+        /// Carico usato nell'ultima sessione (0 a corpo libero).
         public let currentWeightKg: Double
-        /// Carico proposto per oggi.
+        /// Carico proposto per oggi; uguale a ``currentWeightKg`` se si progredisce a ripetizioni.
         public let suggestedWeightKg: Double
-        /// Incremento proposto (2,5 kg, oppure 1,25 kg sui piccoli attrezzi).
+        /// Incremento di carico proposto, già arrotondato al passo dell'attrezzo; 0 se si progredisce a ripetizioni.
         public let incrementKg: Double
         /// Motivazione in italiano, da mostrare come hint.
         public let reason: String
+        /// Tipo di progressione proposta.
+        public let kind: Kind
+        /// Ripetizioni proposte, valorizzate solo quando ``kind`` è ``Kind/reps``.
+        public let suggestedReps: Int?
 
         public init(
             exerciseID: String,
             currentWeightKg: Double,
             suggestedWeightKg: Double,
             incrementKg: Double,
-            reason: String
+            reason: String,
+            kind: Kind = .weight,
+            suggestedReps: Int? = nil
         ) {
             self.exerciseID = exerciseID
             self.currentWeightKg = currentWeightKg
             self.suggestedWeightKg = suggestedWeightKg
             self.incrementKg = incrementKg
             self.reason = reason
+            self.kind = kind
+            self.suggestedReps = suggestedReps
         }
     }
 
-    /// Attrezzi su cui un incremento di 2,5 kg è troppo: si sale di 1,25 kg.
+    /// Attrezzi su cui l'incremento era di 1,25 kg prima dell'introduzione di
+    /// ``WeightStep``. Conservato per retro-compatibilità: **non è più usato**
+    /// dal calcolo, che ora passa dal passo per attrezzo.
     public static let smallIncrementEquipment: Set<String> = [
         "dumbbell", "band", "resistance band", "cable", "kettlebell", "ez barbell", "weighted",
     ]
 
-    /// Incremento consigliato per un attrezzo.
-    public static func suggestedIncrement(forEquipment equipment: String) -> Double {
-        smallIncrementEquipment.contains(equipment.lowercased()) ? 1.25 : 2.5
+    /// Incremento di carico consigliato per un attrezzo, al passo reale della palestra
+    /// (bilanciere 2,5 · manubri 2 · kettlebell 4 · cavi e macchine 5, 2,5 sotto i 20 kg).
+    ///
+    /// Restituisce **0** dove il carico non si regola (corpo libero, elastici): lì la
+    /// progressione è a ripetizioni. Per distinguere i due casi usa direttamente
+    /// ``WeightStep/step(forEquipment:currentWeightKg:)``, che restituisce `nil`.
+    public static func suggestedIncrement(forEquipment equipment: String, currentWeightKg: Double = 0) -> Double {
+        WeightStep.step(forEquipment: equipment, currentWeightKg: currentWeightKg) ?? 0
     }
 
-    /// Suggerisce un aumento di carico quando nell'ultima sessione **tutte** le serie
+    // MARK: - Riscaldamento
+
+    /// Quota del carico di lavoro usata per pre-compilare le serie di riscaldamento.
+    public static let warmupRatio: Double = 0.55
+
+    /// Carico di riscaldamento a partire dal carico di lavoro: ~55%, arrotondato al
+    /// passo dell'attrezzo (SPEC §5, "serie precompilate").
+    ///
+    /// Restituisce `nil` quando non c'è un carico di riferimento, quando l'attrezzo
+    /// non ha un passo di carico (corpo libero, elastici) o quando il riscaldamento
+    /// finirebbe a zero o già al carico di lavoro: in quei casi la serie resta vuota.
+    public static func warmupWeight(
+        forWorkingWeightKg workingWeightKg: Double?,
+        equipment: String = "",
+        ratio: Double = warmupRatio
+    ) -> Double? {
+        guard let workingWeightKg, workingWeightKg > 0 else { return nil }
+        let target = workingWeightKg * ratio
+        guard WeightStep.step(forEquipment: equipment, currentWeightKg: target) != nil else { return nil }
+        let rounded = WeightStep.round(target, forEquipment: equipment)
+        guard rounded > 0, rounded < workingWeightKg else { return nil }
+        return rounded
+    }
+
+    /// Suggerisce una progressione quando nell'ultima sessione **tutte** le serie
     /// normali hanno raggiunto il massimo del range di ripetizioni al carico previsto.
+    ///
+    /// L'aumento è sempre al **passo dell'attrezzo** (``WeightStep``): bilanciere, ez,
+    /// trap bar e multipower +2,5 kg; manubri +2 kg per manubrio; kettlebell +4 kg;
+    /// cavi e macchine +5 kg (+2,5 kg sotto i 20 kg). Dove il carico non si regola
+    /// (corpo libero, elastici) la proposta è di **aggiungere una ripetizione**
+    /// invece che del carico (``ProgressionSuggestion/Kind/reps``).
     ///
     /// Restituisce `nil` (nessun hint) se l'esercizio è a tempo, se manca lo storico,
     /// se le serie fatte sono meno di quelle previste, se qualche serie è rimasta sotto
@@ -122,7 +179,7 @@ extension Stats {
     /// - Parameters:
     ///   - item: la voce della scheda con l'obiettivo da battere.
     ///   - lastSession: l'ultima sessione in cui quell'esercizio è stato allenato.
-    ///   - equipment: attrezzo dell'esercizio, per scegliere l'incremento.
+    ///   - equipment: attrezzo dell'esercizio, per scegliere il passo.
     public static func progressionSuggestion(
         for item: PlanItem,
         lastSession: WorkoutSession?,
@@ -131,29 +188,48 @@ extension Stats {
         guard case .reps(_, let maxReps) = item.measure, maxReps > 0 else { return nil }
         guard let lastSession else { return nil }
 
-        // Solo le serie `.normal`: warmup, drop e cedimento non fanno testo.
+        // Solo le serie `.normal` spuntate: warmup, drop e cedimento non fanno testo.
+        // Il carico può mancare (corpo libero), le ripetizioni no.
         let sets = lastSession.entries
             .filter { $0.exerciseID == item.exerciseID }
             .flatMap(\.sets)
-            .filter { $0.isWorkingSet && $0.kind == .normal }
+            .filter { $0.isCompleted && $0.kind == .normal && ($0.reps ?? 0) > 0 }
 
         guard !sets.isEmpty, sets.count >= max(1, item.targetSets) else { return nil }
         guard sets.allSatisfy({ ($0.reps ?? 0) >= maxReps }) else { return nil }
-        guard let currentWeight = sets.compactMap(\.weightKg).min(), currentWeight > 0 else { return nil }
+
+        let currentWeight = sets.compactMap(\.weightKg).filter { $0 > 0 }.min() ?? 0
         if let target = item.targetWeightKg, currentWeight < target { return nil }
 
-        let increment = suggestedIncrement(forEquipment: equipment)
-        let suggested = currentWeight + increment
-        let weightText = WeightUnit.trimmedNumber(currentWeight, fractionDigits: 2)
-        let suggestedText = WeightUnit.trimmedNumber(suggested, fractionDigits: 2)
-        let reason = "Ultima volta \(sets.count) serie da \(maxReps) ripetizioni a \(weightText) kg: prova \(suggestedText) kg."
+        let doneText = "Ultima volta \(sets.count) serie da \(maxReps) ripetizioni"
 
+        // Progressione a carico: serve un carico di partenza e un passo per l'attrezzo.
+        if currentWeight > 0, let suggested = WeightStep.next(after: currentWeight, forEquipment: equipment) {
+            let weightText = ItalianNumberFormat.number(currentWeight, fractionDigits: 2, grouping: false)
+            let suggestedText = ItalianNumberFormat.number(suggested, fractionDigits: 2, grouping: false)
+            return ProgressionSuggestion(
+                exerciseID: item.exerciseID,
+                currentWeightKg: currentWeight,
+                suggestedWeightKg: suggested,
+                incrementKg: suggested - currentWeight,
+                reason: "\(doneText) a \(weightText) kg: prova \(suggestedText) kg.",
+                kind: .weight
+            )
+        }
+
+        // Corpo libero ed elastici: si aggiunge una ripetizione.
+        let suggestedReps = maxReps + 1
+        let carried = currentWeight > 0
+            ? " a \(ItalianNumberFormat.number(currentWeight, fractionDigits: 2, grouping: false)) kg"
+            : ""
         return ProgressionSuggestion(
             exerciseID: item.exerciseID,
             currentWeightKg: currentWeight,
-            suggestedWeightKg: suggested,
-            incrementKg: increment,
-            reason: reason
+            suggestedWeightKg: currentWeight,
+            incrementKg: 0,
+            reason: "\(doneText)\(carried): prova \(suggestedReps) ripetizioni.",
+            kind: .reps,
+            suggestedReps: suggestedReps
         )
     }
 

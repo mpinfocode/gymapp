@@ -39,6 +39,27 @@ func runStoreChecks(_ h: Harness, repository: ExerciseRepository?) async {
     await store.load() // seconda chiamata: deve essere un no-op
     h.check("load() è idempotente", store.programs.isEmpty && store.sessions.isEmpty)
 
+    // Ricarica della libreria: serve alla UI quando il caricamento iniziale fallisce.
+    let libraryReloaded = await store.reloadExercises()
+    h.check("reloadExercises() riesce", libraryReloaded)
+    h.check("libreria ancora completa dopo la ricarica", store.exercises?.count == 1_324)
+    h.check("la ricarica non lascia errori: \(store.loadErrors)", store.loadErrors.isEmpty)
+    h.check("la ricarica non tocca schede e storico", store.programs.isEmpty && store.sessions.isEmpty)
+    h.check("la ricarica non tocca la sessione in corso", store.activeSession == nil)
+
+    let emptyLibraryStore = AppStore(
+        store: JSONFileStore(directory: directory),
+        exercises: ExerciseRepository(exercises: []),
+        calendar: Fixtures.calendar,
+        saveDelay: .milliseconds(50),
+        now: clock.provider
+    )
+    await emptyLibraryStore.load()
+    h.check("libreria iniettata vuota", emptyLibraryStore.exercises?.count == 0)
+    h.check("ricarica dal bundle riuscita", await emptyLibraryStore.reloadExercises())
+    h.check("la ricarica rimpiazza la libreria", emptyLibraryStore.exercises?.count == 1_324)
+    h.check("dopo la ricarica la ricerca funziona", !emptyLibraryStore.searchExercises(ExerciseFilter(query: "bench")).isEmpty)
+
     // MARK: Scheda d'esempio
 
     h.section("store · scheda d'esempio")
@@ -216,7 +237,11 @@ func runStoreChecks(_ h: Harness, repository: ExerciseRepository?) async {
             restoreStore.activeSession?.programID == sample.id && restoreStore.activeSession?.programDayID == pushDay.id)
     h.check("nessuna sessione archiviata prima di terminare", restoreStore.sessions.isEmpty)
     h.check("la scheda è stata ricaricata", restoreStore.programs.count == 1 && restoreStore.activeProgram?.id == sample.id)
-    h.check("i badge PR non sopravvivono al riavvio", restoreStore.liveRecords.isEmpty)
+    // I badge PR non stanno su disco ma si ricalcolano dalle serie già spuntate.
+    h.check("i badge PR sono ricostruiti al riavvio", !restoreStore.liveRecords.isEmpty)
+    h.check("i badge PR ricostruiti sono quelli del calcolo live", restoreStore.liveRecords == store.liveRecords)
+    restoreStore.rebuildLiveRecords()
+    h.check("ricostruzione idempotente", restoreStore.liveRecords == store.liveRecords)
 
     // MARK: Fine sessione
 
@@ -273,7 +298,11 @@ func runStoreChecks(_ h: Harness, repository: ExerciseRepository?) async {
     h.check("prima serie pre-compilata con le ultime reps", benchSets.first?.reps == 8)
     h.check("seconda serie segue la seconda di prima", benchSets[1].reps == 7)
     h.check("le serie oltre lo storico ripetono l'ultima", benchSets[3].reps == 6)
-    h.check("le serie di riscaldamento restano vuote", second.entries[0].sets.prefix(2).allSatisfy { $0.weightKg == nil })
+    // Riscaldamento: ~55% di 80 kg = 44 kg, arrotondato al passo del bilanciere → 45 kg.
+    h.check("le serie di riscaldamento partono dal 55% arrotondato",
+            second.entries[0].sets.prefix(2).allSatisfy { $0.kind == .warmup && $0.weightKg == 45 })
+    h.check("il riscaldamento usa le reps minime del range",
+            second.entries[0].sets.prefix(2).allSatisfy { $0.reps == pushDay.items[0].measure.repsRange?.lowerBound })
     h.check("gli esercizi senza storico restano vuoti", second.entries[1].sets.allSatisfy { $0.weightKg == nil })
     h.check("le serie pre-compilate non sono spuntate", second.entries.allSatisfy { $0.sets.allSatisfy { !$0.isCompleted } })
 
@@ -299,7 +328,7 @@ func runStoreChecks(_ h: Harness, repository: ExerciseRepository?) async {
         reloaded.finishSession()
         if let hint = reloaded.progressionSuggestion(for: pushDay.items[0]) {
             h.checkClose("hint di progressione: nuovo carico", hint.suggestedWeightKg, 82.5)
-            h.check("hint di progressione: motivazione", hint.reason.contains("82.5 kg"))
+            h.check("hint di progressione: motivazione", hint.reason.contains("82,5 kg"))
             h.checkClose("hint di progressione: incremento da bilanciere", hint.incrementKg, 2.5)
         } else {
             h.fail("nessun hint dopo aver completato il range")

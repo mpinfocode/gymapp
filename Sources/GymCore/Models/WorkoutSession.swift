@@ -85,6 +85,17 @@ public struct SetLog: Codable, Sendable, Hashable, Identifiable {
         isCompleted && kind.countsTowardVolume && (weightKg ?? 0) > 0 && (reps ?? 0) > 0
     }
 
+    /// `true` se la serie è stata svolta davvero e ha qualcosa da mostrare.
+    ///
+    /// Più larga di ``isWorkingSet``: comprende anche gli esercizi **a durata**
+    /// (plank, cardio) e il **corpo libero** (ripetizioni senza carico), che non
+    /// entrano nel volume né nei record ma devono comparire nella colonna
+    /// PRECEDENTE e pre-compilare le serie. Riscaldamento e serie non spuntate
+    /// restano fuori.
+    public var isLoggedSet: Bool {
+        isCompleted && kind.countsTowardVolume && ((reps ?? 0) > 0 || (durationSec ?? 0) > 0)
+    }
+
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
@@ -136,6 +147,8 @@ public struct SessionEntry: Codable, Sendable, Hashable, Identifiable {
     public var completedSets: Int { sets.reduce(0) { $0 + ($1.isCompleted ? 1 : 0) } }
     /// Serie completate che contano per volume e record.
     public var workingSets: [SetLog] { sets.filter(\.isWorkingSet) }
+    /// Serie completate da mostrare, compresi durata e corpo libero (vedi ``SetLog/isLoggedSet``).
+    public var loggedSets: [SetLog] { sets.filter(\.isLoggedSet) }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)

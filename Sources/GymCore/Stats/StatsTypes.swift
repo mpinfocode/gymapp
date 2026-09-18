@@ -65,7 +65,8 @@ extension Stats {
     public struct PreviousPerformance: Sendable, Hashable {
         public let sessionID: UUID
         public let date: Date
-        /// Serie di lavoro completate, nell'ordine originale.
+        /// Serie completate da mostrare, nell'ordine originale: comprende anche
+        /// durata e corpo libero (vedi ``SetLog/isLoggedSet``).
         public let sets: [SetLog]
 
         public init(sessionID: UUID, date: Date, sets: [SetLog]) {
@@ -74,11 +75,18 @@ extension Stats {
             self.sets = sets
         }
 
-        /// Testo per la colonna PRECEDENTE di una certa serie (`"80 × 8"`), `nil` se non c'è.
+        /// Serie oltre la quale si ripete l'ultima, come fa la colonna PRECEDENTE.
+        public func set(at position: Int) -> SetLog? {
+            sets.indices.contains(position) ? sets[position] : sets.last
+        }
+
+        /// Testo per la colonna PRECEDENTE di una certa serie, `nil` se non c'è.
+        ///
+        /// Copre tutti i casi: `"80 × 8"` con carico, `"12 rip."` a corpo libero,
+        /// `"45s"` a tempo (vedi ``Stats/performanceText(for:unit:)``).
         public func text(forSetAt position: Int, unit: WeightUnit = .kg) -> String? {
-            guard let set = sets.indices.contains(position) ? sets[position] : sets.last,
-                  let weight = set.weightKg, let reps = set.reps else { return nil }
-            return "\(unit.format(kilograms: weight, includeSymbol: false)) × \(reps)"
+            guard let set = set(at: position) else { return nil }
+            return Stats.performanceText(for: set, unit: unit)
         }
     }
 

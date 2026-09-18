@@ -39,8 +39,12 @@ public final class AppStore {
     public private(set) var loadErrors: [String] = []
     /// Ultimo errore di scrittura, da mostrare in Impostazioni.
     public private(set) var saveError: String?
-    /// Record battuti nella sessione in corso, per serie. Solo in memoria:
-    /// dopo un riavvio dell'app i badge PR della sessione ripristinata non ricompaiono.
+    /// Record battuti nella sessione in corso, per serie.
+    ///
+    /// Non viene salvato su disco ma è **ricostruibile**: al ripristino di una
+    /// sessione attiva ``load()`` richiama ``rebuildLiveRecords()``, che riconfronta
+    /// le serie già spuntate con lo storico e con le serie precedenti della stessa
+    /// sessione. I badge PR quindi sopravvivono a un riavvio dell'app.
     public private(set) var liveRecords: [UUID: Set<Stats.RecordKind>] = [:]
 
     // MARK: - Dipendenze
@@ -109,12 +113,56 @@ public final class AppStore {
             do {
                 exercises = try await ExerciseRepository.loadFromBundle()
             } catch {
-                loadErrors.append("esercizi: \(error)")
+                loadErrors.append("\(Self.exercisesErrorPrefix)\(error)")
             }
         }
 
         mergedLibraryCache = nil
+        rebuildLiveRecords()
         isLoaded = true
+    }
+
+    /// Prefisso degli errori di caricamento della libreria esercizi.
+    private static let exercisesErrorPrefix = "esercizi: "
+
+    /// Ricarica la libreria esercizi dal bundle.
+    ///
+    /// Serve quando il caricamento iniziale è fallito (``loadErrors`` non vuoto e
+    /// ``exercises`` `nil`): la UI può offrire un "Riprova" senza far riavviare l'app.
+    /// Se la lettura riesce, la libreria viene sostituita, l'indice di ricerca
+    /// ricostruito (personalizzati compresi) e l'errore precedente rimosso; se
+    /// fallisce, lo stato resta quello di prima con l'errore aggiornato.
+    ///
+    /// Non tocca schede, storico, impostazioni né la sessione in corso.
+    ///
+    /// - Returns: `true` se la libreria è stata ricaricata.
+    @discardableResult
+    public func reloadExercises() async -> Bool {
+        do {
+            let repository = try await ExerciseRepository.loadFromBundle()
+            exercises = repository
+            mergedLibraryCache = nil
+            loadErrors.removeAll { $0.hasPrefix(Self.exercisesErrorPrefix) }
+            return true
+        } catch {
+            loadErrors.removeAll { $0.hasPrefix(Self.exercisesErrorPrefix) }
+            loadErrors.append("\(Self.exercisesErrorPrefix)\(error)")
+            return false
+        }
+    }
+
+    /// Ricalcola i badge PR della sessione in corso confrontando le serie già
+    /// spuntate con lo storico e con le serie precedenti della stessa sessione.
+    ///
+    /// Stessa logica del calcolo in tempo reale (``Stats/liveRecords(in:history:)``):
+    /// serve al ripristino dopo un riavvio, dove il contenuto di ``liveRecords``
+    /// andrebbe altrimenti perso.
+    public func rebuildLiveRecords() {
+        guard let activeSession else {
+            liveRecords = [:]
+            return
+        }
+        liveRecords = Stats.liveRecords(in: activeSession, history: sessions)
     }
 
     private func loadCollection<T: Decodable & Sendable>(_ type: T.Type, from file: StoreFile, fallback: T) async -> T {
@@ -903,16 +951,32 @@ public final class AppStore {
 
     /// Costruisce la riga di sessione per una voce di scheda:
     /// serie di riscaldamento + serie di lavoro pre-compilate.
+    ///
+    /// Le serie di riscaldamento partono da ~55% del carico di lavoro, arrotondato
+    /// al passo dell'attrezzo (``WeightStep``), con le ripetizioni del minimo del
+    /// range. Se non c'è un carico di riferimento — o l'attrezzo non ha un passo di
+    /// carico, come il corpo libero — restano vuote.
     private func makeEntry(for item: PlanItem, before date: Date) -> SessionEntry {
         let previous = Stats.previousPerformance(for: item.exerciseID, in: sessions, before: date)
         let duration = item.measure.durationSeconds
         let defaultReps = item.measure.repsRange?.lowerBound
 
-        var sets: [SetLog] = (0..<item.warmupSets).map { _ in SetLog(kind: .warmup) }
+        let workingWeight = item.targetWeightKg
+            ?? previous?.sets.compactMap(\.weightKg).first { $0 > 0 }
+        let warmupWeight = Stats.warmupWeight(
+            forWorkingWeightKg: workingWeight,
+            equipment: exercise(id: item.exerciseID)?.equipment ?? ""
+        )
+
+        var sets: [SetLog] = (0..<item.warmupSets).map { _ in
+            SetLog(
+                kind: .warmup,
+                weightKg: warmupWeight,
+                reps: warmupWeight != nil && duration == nil ? defaultReps : nil
+            )
+        }
         sets.append(contentsOf: (0..<max(1, item.targetSets)).map { position -> SetLog in
-            let reference = previous.flatMap { performance -> SetLog? in
-                performance.sets.indices.contains(position) ? performance.sets[position] : performance.sets.last
-            }
+            let reference = previous.flatMap { performance in performance.set(at: position) }
             return SetLog(
                 kind: .normal,
                 weightKg: item.targetWeightKg ?? reference?.weightKg,

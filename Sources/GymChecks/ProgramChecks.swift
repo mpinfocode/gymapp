@@ -258,7 +258,7 @@ func runProgramChecks(_ h: Harness) {
         h.checkClose("bilanciere: +2,5 kg", suggestion.incrementKg, 2.5)
         h.checkClose("carico attuale", suggestion.currentWeightKg, 80)
         h.checkClose("carico proposto", suggestion.suggestedWeightKg, 82.5)
-        h.check("motivazione in italiano", suggestion.reason.contains("82.5 kg") && suggestion.reason.contains("3 serie"))
+        h.check("motivazione in italiano", suggestion.reason.contains("82,5 kg") && suggestion.reason.contains("3 serie"))
         h.check("esercizio corretto", suggestion.exerciseID == "0025")
     } else {
         h.fail("nessun suggerimento quando il range è stato completato")
@@ -270,15 +270,16 @@ func runProgramChecks(_ h: Harness) {
         lastSession: session("0334", sets: [(12, 15), (12, 15), (12, 15)]),
         equipment: "dumbbell"
     ) {
-        h.checkClose("manubri: +1,25 kg", suggestion.incrementKg, 1.25)
-        h.checkClose("carico proposto sui manubri", suggestion.suggestedWeightKg, 13.25)
+        h.checkClose("manubri: +2 kg (passo della rastrelliera)", suggestion.incrementKg, 2)
+        h.checkClose("carico proposto sui manubri", suggestion.suggestedWeightKg, 14)
     } else {
         h.fail("nessun suggerimento sui manubri")
     }
 
-    h.check("incremento piccolo sui cavi", Stats.suggestedIncrement(forEquipment: "cable") == 1.25)
+    h.check("incremento sui cavi sotto i 20 kg", Stats.suggestedIncrement(forEquipment: "cable") == 2.5)
+    h.check("incremento sui cavi a carico pieno", Stats.suggestedIncrement(forEquipment: "cable", currentWeightKg: 40) == 5)
     h.check("incremento standard sul bilanciere", Stats.suggestedIncrement(forEquipment: "barbell") == 2.5)
-    h.check("incremento insensibile a maiuscole", Stats.suggestedIncrement(forEquipment: "DUMBBELL") == 1.25)
+    h.check("incremento insensibile a maiuscole", Stats.suggestedIncrement(forEquipment: "DUMBBELL") == 2)
 
     h.check("nessuno storico → nessun suggerimento",
             Stats.progressionSuggestion(for: item, lastSession: nil, equipment: "barbell") == nil)
@@ -346,11 +347,11 @@ func runProgramChecks(_ h: Harness) {
     h.check("rawValue invertibile", BodyMetricKind.allCases.allSatisfy { BodyMetricKind(rawValue: $0.rawValue) == $0 })
     h.check("rawValue ignoto → nil", BodyMetricKind(rawValue: "measure.orecchio") == nil)
 
-    h.check("formattazione in kg", BodyMetricKind.weight.format(78.4) == "78.4 kg")
-    h.check("formattazione in libbre", BodyMetricKind.weight.format(100, weightUnit: .lb) == "220.5 lb")
+    h.check("formattazione in kg", BodyMetricKind.weight.format(78.4) == "78,4 kg")
+    h.check("formattazione in libbre", BodyMetricKind.weight.format(100, weightUnit: .lb) == "220,5 lb")
     h.check("formattazione in cm", BodyMetricKind.measure(.waist).format(82) == "82 cm")
-    h.check("formattazione in percentuale", BodyMetricKind.bodyFat.format(14.2) == "14.2%")
-    h.check("percentuale arrotondata a un decimale", BodyMetricKind.bodyFat.format(14.26) == "14.3%")
+    h.check("formattazione in percentuale", BodyMetricKind.bodyFat.format(14.2) == "14,2%")
+    h.check("percentuale arrotondata a un decimale", BodyMetricKind.bodyFat.format(14.26) == "14,3%")
     h.check("percentuale intera senza decimali", BodyMetricKind.water.format(58) == "58%")
 
     var entry = BodyEntry(date: Fixtures.date(2025, 3, 3), weightKg: 78.4, bodyFatPct: 14.2)
@@ -422,7 +423,7 @@ func runProgramChecks(_ h: Harness) {
     if let change = Stats.bodyChange(of: .weight, in: entries, since: Fixtures.date(2025, 3, 3)) {
         h.checkClose("riferimento = rilevazione alla data di inizio", change.start.value, 79.2)
         h.checkClose("variazione del peso", change.delta, -1.2, tolerance: 0.000_1)
-        h.check("testo della variazione", change.deltaText() == "-1.2 kg")
+        h.check("testo della variazione", change.deltaText() == "-1,2 kg")
         h.checkClose("variazione percentuale", change.percentChange ?? 0, -1.515_15, tolerance: 0.001)
     } else {
         h.fail("variazione del peso non calcolata")
@@ -437,7 +438,7 @@ func runProgramChecks(_ h: Harness) {
 
     if let change = Stats.bodyChange(of: .measure(.armRight), in: entries, since: Fixtures.date(2025, 3, 3)) {
         h.checkClose("senza dato alla data si parte dal primo disponibile", change.start.value, 38.5)
-        h.check("testo con segno positivo", change.deltaText() == "+0.5 cm")
+        h.check("testo con segno positivo", change.deltaText() == "+0,5 cm")
     } else {
         h.fail("variazione del braccio non calcolata")
     }

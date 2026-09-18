@@ -159,8 +159,8 @@ func runStatsChecks(_ h: Harness) {
     if let previous = Stats.previousPerformance(for: "0025", in: history) {
         h.check("prende la sessione più recente", previous.date == Fixtures.date(2025, 1, 20))
         h.check("restituisce le serie di lavoro", previous.sets.count == 2)
-        h.check("testo per la colonna PRECEDENTE", previous.text(forSetAt: 0) == "82.5 × 10")
-        h.check("oltre l'ultima serie ripete l'ultima", previous.text(forSetAt: 5) == "82.5 × 9")
+        h.check("testo per la colonna PRECEDENTE", previous.text(forSetAt: 0) == "82,5 × 10")
+        h.check("oltre l'ultima serie ripete l'ultima", previous.text(forSetAt: 5) == "82,5 × 9")
         h.check("testo in libbre", previous.text(forSetAt: 0, unit: .lb)?.hasSuffix("× 10") == true)
     } else {
         h.fail("prestazione precedente non trovata")
@@ -313,8 +313,8 @@ func runStatsChecks(_ h: Harness) {
     h.check("durata in secondi", Stats.formatDuration(30) == "30s")
     h.check("durata zero", Stats.formatDuration(0) == "0s")
     h.check("durata negativa", Stats.formatDuration(-60) == "0s")
-    h.check("volume sotto le 10 t", Stats.formatVolume(4_820) == "4820 kg")
-    h.check("volume oltre le 10 t abbreviato", Stats.formatVolume(12_400) == "12.4k kg")
+    h.check("volume sotto le 10 t con le migliaia separate", Stats.formatVolume(4_820) == "4.820 kg")
+    h.check("volume oltre le 10 t abbreviato", Stats.formatVolume(12_400) == "12,4k kg")
     h.check("volume in libbre", Stats.formatVolume(100, unit: .lb) == "220 lb")
 
     // MARK: Calendario

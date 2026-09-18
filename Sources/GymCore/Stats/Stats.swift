@@ -146,6 +146,12 @@ public enum Stats {
 
     /// Ultima sessione (strettamente precedente a `date`) in cui l'esercizio è stato allenato.
     ///
+    /// Copre **tutti** i modi di allenare un esercizio, non solo kg × ripetizioni:
+    /// entrano anche le serie a **durata** (plank, cardio) e quelle a **corpo libero**
+    /// (ripetizioni senza carico), così la colonna PRECEDENTE e la pre-compilazione
+    /// funzionano sempre. Restano fuori riscaldamento e serie non spuntate
+    /// (vedi ``SetLog/isLoggedSet``).
+    ///
     /// - Parameter sessions: storico, in qualunque ordine.
     public static func previousPerformance(
         for exerciseID: String,
@@ -154,14 +160,14 @@ public enum Stats {
     ) -> PreviousPerformance? {
         var best: WorkoutSession?
         for session in sessions where session.startedAt < date {
-            guard !workingSets(for: exerciseID, in: session).isEmpty else { continue }
+            guard !loggedSets(for: exerciseID, in: session).isEmpty else { continue }
             if best == nil || session.startedAt > best!.startedAt { best = session }
         }
         guard let best else { return nil }
         return PreviousPerformance(
             sessionID: best.id,
             date: best.startedAt,
-            sets: workingSets(for: exerciseID, in: best)
+            sets: loggedSets(for: exerciseID, in: best)
         )
     }
 
@@ -349,6 +355,37 @@ public enum Stats {
             .flatMap(\.workingSets)
     }
 
+    /// Serie completate di un esercizio da **mostrare**, nell'ordine originale.
+    ///
+    /// Come ``workingSets(for:in:)`` ma comprende anche durata e corpo libero
+    /// (vedi ``SetLog/isLoggedSet``): serve alla colonna PRECEDENTE, non ai record.
+    public static func loggedSets(for exerciseID: String, in session: WorkoutSession) -> [SetLog] {
+        session.entries
+            .filter { $0.exerciseID == exerciseID }
+            .flatMap(\.loggedSets)
+    }
+
+    /// Testo compatto di una serie già svolta, per la colonna PRECEDENTE.
+    ///
+    /// - `"82,5 × 10"` carico e ripetizioni;
+    /// - `"10 rip."` corpo libero (ripetizioni senza carico);
+    /// - `"45s"` / `"1:30"` esercizio a tempo;
+    /// - `"10 × 45s"` esercizio a tempo con zavorra;
+    /// - `nil` se non c'è niente da mostrare.
+    public static func performanceText(for set: SetLog, unit: WeightUnit = .kg) -> String? {
+        let weight = (set.weightKg ?? 0) > 0 ? set.weightKg : nil
+        let weightText = weight.map { unit.format(kilograms: $0, includeSymbol: false) }
+
+        if let duration = set.durationSec, duration > 0 {
+            let durationText = SetMeasure.formatDuration(duration)
+            guard let weightText else { return durationText }
+            return "\(weightText) × \(durationText)"
+        }
+        guard let reps = set.reps, reps > 0 else { return nil }
+        guard let weightText else { return "\(reps) rip." }
+        return "\(weightText) × \(reps)"
+    }
+
     /// Durata formattata in italiano (`"1h 12m"`, `"45m"`, `"30s"`).
     public static func formatDuration(_ interval: TimeInterval) -> String {
         let total = max(0, Int(interval.rounded()))
@@ -360,12 +397,12 @@ public enum Stats {
         return "\(seconds)s"
     }
 
-    /// Volume formattato con il separatore delle migliaia (`"12.4k kg"` oltre le 10 t).
+    /// Volume formattato all'italiana: `"4.820 kg"`, e `"12,4k kg"` oltre le 10 t.
     public static func formatVolume(_ kilograms: Double, unit: WeightUnit = .kg) -> String {
         let value = unit.value(fromKilograms: kilograms)
         if value >= 10_000 {
-            return "\(WeightUnit.trimmedNumber(value / 1000, fractionDigits: 1))k \(unit.symbol)"
+            return "\(ItalianNumberFormat.number(value / 1000, fractionDigits: 1, grouping: false))k \(unit.symbol)"
         }
-        return "\(WeightUnit.trimmedNumber(value, fractionDigits: 0)) \(unit.symbol)"
+        return "\(ItalianNumberFormat.integer(value)) \(unit.symbol)"
     }
 }

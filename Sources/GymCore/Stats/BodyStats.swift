@@ -38,12 +38,24 @@ extension Stats {
             return delta / start.value * 100
         }
 
-        /// Testo con segno, es. `"+1.5 kg"` / `"-2 cm"`.
+        /// Testo con segno, in italiano: `"+1,5 kg"`, `"-2 cm"`, `"-1,2%"`.
+        ///
+        /// Segno meno ASCII, virgola decimale e percentuale attaccata al numero
+        /// (``ItalianNumberFormat``): è già pronto da mettere in una card.
         public func deltaText(weightUnit: WeightUnit = .kg) -> String {
             let converted = metric.unit == .kilograms ? weightUnit.value(fromKilograms: delta) : delta
-            let sign = converted > 0 ? "+" : ""
             let symbol = metric.unit == .kilograms ? weightUnit.symbol : metric.unit.symbol
-            return "\(sign)\(WeightUnit.trimmedNumber(converted, fractionDigits: metric.unit.fractionDigits)) \(symbol)"
+            let number = ItalianNumberFormat.signed(
+                converted,
+                fractionDigits: metric.unit.fractionDigits,
+                grouping: false
+            )
+            return metric.unit == .percent ? number + symbol : number + " " + symbol
+        }
+
+        /// Variazione percentuale già formattata (`"-1,5%"`), `nil` se partiva da 0.
+        public func percentChangeText() -> String? {
+            percentChange.map { ItalianNumberFormat.signedPercent($0) }
         }
     }
 
