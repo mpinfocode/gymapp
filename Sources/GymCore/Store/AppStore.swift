@@ -893,9 +893,15 @@ public final class AppStore {
     }
 
     /// Hint di progressione per una voce della scheda, in base all'ultima volta.
+    ///
+    /// L'ultima sessione si cerca fra quelle con serie **registrate**
+    /// (``Stats/loggedSets(for:in:)``) e non solo fra quelle con serie di lavoro:
+    /// a corpo libero e con gli elastici le serie non hanno carico, quindi
+    /// filtrandole per `workingSets` il suggerimento di ripetizioni non sarebbe
+    /// mai proposto.
     public func progressionSuggestion(for item: PlanItem) -> Stats.ProgressionSuggestion? {
         let last = sessions
-            .filter { !Stats.workingSets(for: item.exerciseID, in: $0).isEmpty }
+            .filter { !Stats.loggedSets(for: item.exerciseID, in: $0).isEmpty }
             .max { $0.startedAt < $1.startedAt }
         return Stats.progressionSuggestion(
             for: item,

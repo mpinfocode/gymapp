@@ -49,12 +49,12 @@ public struct BlobPalette: Sendable, Hashable, Identifiable {
     public static let all: [BlobPalette] = [
         BlobPalette(
             id: 0, name: "pesca",
-            base: .adaptive(light: Color(hex: 0xFDF2EA), dark: Color(hex: 0x14100C)),
+            base: .adaptive(light: Color(hex: 0xFDF2EA), dark: Color(hex: 0x100F0E)),
             baseEnd: .adaptive(light: Color(hex: 0xFBE8DC), dark: Color(hex: 0x0A0806)),
             blobs: [
-                .adaptive(light: Color(hex: 0xFBD9BF), dark: Color(hex: 0xD9A278)),
-                .adaptive(light: Color(hex: 0xF7C7C3), dark: Color(hex: 0xD18F88)),
-                .adaptive(light: Color(hex: 0xFBE7C0), dark: Color(hex: 0xD6BA82)),
+                .adaptive(light: Color(hex: 0xFBD9BF), dark: Color(hex: 0xF0B78A)),
+                .adaptive(light: Color(hex: 0xF7C7C3), dark: Color(hex: 0xEDA79E)),
+                .adaptive(light: Color(hex: 0xFBE7C0), dark: Color(hex: 0xEFD199)),
             ]
         ),
         BlobPalette(
@@ -62,9 +62,9 @@ public struct BlobPalette: Sendable, Hashable, Identifiable {
             base: .adaptive(light: Color(hex: 0xEDF8F2), dark: Color(hex: 0x0A1410)),
             baseEnd: .adaptive(light: Color(hex: 0xE2F2EC), dark: Color(hex: 0x050A08)),
             blobs: [
-                .adaptive(light: Color(hex: 0xC2E8D2), dark: Color(hex: 0x76BA98)),
-                .adaptive(light: Color(hex: 0xBFE3E8), dark: Color(hex: 0x74AFB8)),
-                .adaptive(light: Color(hex: 0xDDF0D8), dark: Color(hex: 0x9CC48F)),
+                .adaptive(light: Color(hex: 0xC2E8D2), dark: Color(hex: 0xA5D2BC)),
+                .adaptive(light: Color(hex: 0xBFE3E8), dark: Color(hex: 0x9DC7CD)),
+                .adaptive(light: Color(hex: 0xDDF0D8), dark: Color(hex: 0xB8D5AF)),
             ]
         ),
         BlobPalette(
@@ -72,9 +72,9 @@ public struct BlobPalette: Sendable, Hashable, Identifiable {
             base: .adaptive(light: Color(hex: 0xF3F0FB), dark: Color(hex: 0x100E18)),
             baseEnd: .adaptive(light: Color(hex: 0xECE8F7), dark: Color(hex: 0x08070E)),
             blobs: [
-                .adaptive(light: Color(hex: 0xD8D2F2), dark: Color(hex: 0x8C82C4)),
-                .adaptive(light: Color(hex: 0xE3D2F0), dark: Color(hex: 0x9B82BF)),
-                .adaptive(light: Color(hex: 0xCBD5F5), dark: Color(hex: 0x7B89C9)),
+                .adaptive(light: Color(hex: 0xD8D2F2), dark: Color(hex: 0xC2BCE0)),
+                .adaptive(light: Color(hex: 0xE3D2F0), dark: Color(hex: 0xC2B2D8)),
+                .adaptive(light: Color(hex: 0xCBD5F5), dark: Color(hex: 0xC0C6E5)),
             ]
         ),
         BlobPalette(
@@ -82,9 +82,9 @@ public struct BlobPalette: Sendable, Hashable, Identifiable {
             base: .adaptive(light: Color(hex: 0xF0F5EE), dark: Color(hex: 0x0C120C)),
             baseEnd: .adaptive(light: Color(hex: 0xE7EFE4), dark: Color(hex: 0x060906)),
             blobs: [
-                .adaptive(light: Color(hex: 0xCFE3C8), dark: Color(hex: 0x82A879)),
-                .adaptive(light: Color(hex: 0xDDEBCE), dark: Color(hex: 0x97B27E)),
-                .adaptive(light: Color(hex: 0xBFDDCB), dark: Color(hex: 0x72A88C)),
+                .adaptive(light: Color(hex: 0xCFE3C8), dark: Color(hex: 0xB6CCB0)),
+                .adaptive(light: Color(hex: 0xDDEBCE), dark: Color(hex: 0xB1C69F)),
+                .adaptive(light: Color(hex: 0xBFDDCB), dark: Color(hex: 0xB6D2C4)),
             ]
         ),
         BlobPalette(
@@ -92,9 +92,9 @@ public struct BlobPalette: Sendable, Hashable, Identifiable {
             base: .adaptive(light: Color(hex: 0xFCF0F4), dark: Color(hex: 0x160F12)),
             baseEnd: .adaptive(light: Color(hex: 0xF7E8EE), dark: Color(hex: 0x0B0709)),
             blobs: [
-                .adaptive(light: Color(hex: 0xF5D2DE), dark: Color(hex: 0xC98BA1)),
-                .adaptive(light: Color(hex: 0xF7DCD0), dark: Color(hex: 0xCC978A)),
-                .adaptive(light: Color(hex: 0xE8D2EC), dark: Color(hex: 0xA98BB5)),
+                .adaptive(light: Color(hex: 0xF5D2DE), dark: Color(hex: 0xDCB4C3)),
+                .adaptive(light: Color(hex: 0xF7DCD0), dark: Color(hex: 0xD8B0A6)),
+                .adaptive(light: Color(hex: 0xE8D2EC), dark: Color(hex: 0xD1C1D7)),
             ]
         ),
         BlobPalette(
@@ -102,19 +102,19 @@ public struct BlobPalette: Sendable, Hashable, Identifiable {
             base: .adaptive(light: Color(hex: 0xEFF4FA), dark: Color(hex: 0x0A0F16)),
             baseEnd: .adaptive(light: Color(hex: 0xE6EDF6), dark: Color(hex: 0x05080B)),
             blobs: [
-                .adaptive(light: Color(hex: 0xCCDDF2), dark: Color(hex: 0x7392BA)),
-                .adaptive(light: Color(hex: 0xD3E6F2), dark: Color(hex: 0x7FA6BC)),
-                .adaptive(light: Color(hex: 0xD8D8F0), dark: Color(hex: 0x8686BF)),
+                .adaptive(light: Color(hex: 0xCCDDF2), dark: Color(hex: 0xB4C5DA)),
+                .adaptive(light: Color(hex: 0xD3E6F2), dark: Color(hex: 0xA6C1D1)),
+                .adaptive(light: Color(hex: 0xD8D8F0), dark: Color(hex: 0xC5C5E0)),
             ]
         ),
         BlobPalette(
             id: 6, name: "sabbia",
-            base: .adaptive(light: Color(hex: 0xFBF5EC), dark: Color(hex: 0x14110A)),
+            base: .adaptive(light: Color(hex: 0xFBF5EC), dark: Color(hex: 0x101010)),
             baseEnd: .adaptive(light: Color(hex: 0xF5EDE0), dark: Color(hex: 0x0A0805)),
             blobs: [
-                .adaptive(light: Color(hex: 0xEFE0C4), dark: Color(hex: 0xC4B183)),
-                .adaptive(light: Color(hex: 0xF2D9C2), dark: Color(hex: 0xC9A684)),
-                .adaptive(light: Color(hex: 0xE3E0CC), dark: Color(hex: 0xB0AE8B)),
+                .adaptive(light: Color(hex: 0xEFE0C4), dark: Color(hex: 0xE4CB93)),
+                .adaptive(light: Color(hex: 0xF2D9C2), dark: Color(hex: 0xE6B893)),
+                .adaptive(light: Color(hex: 0xE3E0CC), dark: Color(hex: 0xCBC9A2)),
             ]
         ),
         BlobPalette(
@@ -122,9 +122,9 @@ public struct BlobPalette: Sendable, Hashable, Identifiable {
             base: .adaptive(light: Color(hex: 0xEDF5F8), dark: Color(hex: 0x0A1215)),
             baseEnd: .adaptive(light: Color(hex: 0xE3EFF4), dark: Color(hex: 0x05090B)),
             blobs: [
-                .adaptive(light: Color(hex: 0xC6E4EC), dark: Color(hex: 0x74AEBC)),
-                .adaptive(light: Color(hex: 0xD5E8F0), dark: Color(hex: 0x82B2C4)),
-                .adaptive(light: Color(hex: 0xCFEDE4), dark: Color(hex: 0x7CBAAB)),
+                .adaptive(light: Color(hex: 0xC6E4EC), dark: Color(hex: 0xA7CCD5)),
+                .adaptive(light: Color(hex: 0xD5E8F0), dark: Color(hex: 0xA0C4D2)),
+                .adaptive(light: Color(hex: 0xCFEDE4), dark: Color(hex: 0xAED4CB)),
             ]
         ),
     ]

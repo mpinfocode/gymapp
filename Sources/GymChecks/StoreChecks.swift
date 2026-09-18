@@ -495,6 +495,60 @@ func runStoreChecks(_ h: Harness, repository: ExerciseRepository?) async {
     await reloaded.flush()
     h.check("nessun errore di scrittura: \(reloaded.saveError ?? "-")", reloaded.saveError == nil)
 
+    // MARK: Progressione a corpo libero
+
+    h.section("store · progressione a corpo libero")
+
+    // Le trazioni non hanno carico: le serie non entrano nelle "serie di lavoro",
+    // quindi lo store deve cercare l'ultima sessione fra le serie registrate.
+    let bodyweightDirectory = TempDirectory.make()
+    defer { TempDirectory.remove(bodyweightDirectory) }
+    let bodyweightStore = makeStore(in: bodyweightDirectory)
+    await bodyweightStore.load()
+
+    let calisthenics = bodyweightStore.createProgram(name: "Corpo libero")
+    let pullDay = bodyweightStore.addDay(name: "Trazioni", toProgram: calisthenics.id)
+    // "0652" = pull-up, attrezzo "body weight".
+    let pullItem = bodyweightStore.addItem(
+        exerciseID: "0652",
+        toDay: pullDay.id,
+        inProgram: calisthenics.id,
+        targetSets: 3,
+        measure: .reps(min: 6, max: 10)
+    )
+
+    h.check("senza storico nessun hint a corpo libero", bodyweightStore.progressionSuggestion(for: pullItem) == nil)
+
+    if let pullSession = bodyweightStore.startSession(programID: calisthenics.id, dayID: pullDay.id) {
+        let entry = pullSession.entries[0]
+        let normalSets = entry.sets.filter { $0.kind == .normal }
+        h.check("serie a corpo libero senza carico", normalSets.allSatisfy { $0.weightKg == nil })
+        for setID in normalSets.map(\.id) {
+            bodyweightStore.updateSet(id: setID, inEntry: entry.id) { $0.weightKg = nil; $0.reps = 10 }
+            bodyweightStore.completeSet(id: setID, inEntry: entry.id)
+        }
+        clock.advance(by: 3_600)
+        let archived = bodyweightStore.finishSession()
+        h.check("sessione a corpo libero archiviata", archived != nil)
+        h.check("le serie senza carico non sono serie di lavoro",
+                Stats.workingSets(for: "0652", in: archived ?? pullSession).isEmpty)
+        h.check("le serie senza carico restano serie registrate",
+                Stats.loggedSets(for: "0652", in: archived ?? pullSession).count == normalSets.count)
+
+        if let hint = bodyweightStore.progressionSuggestion(for: pullItem) {
+            h.check("trazioni: lo store propone le ripetizioni", hint.kind == .reps)
+            h.check("trazioni: una ripetizione in più", hint.suggestedReps == 11)
+            h.checkClose("trazioni: nessun incremento di carico", hint.incrementKg, 0)
+            h.check("trazioni: motivazione senza kg", !hint.reason.contains("kg"))
+        } else {
+            h.fail("nessun hint di ripetizioni dopo una sessione di trazioni al massimo del range")
+        }
+    } else {
+        h.fail("sessione di trazioni non avviata")
+    }
+
+    await bodyweightStore.flush()
+
     // MARK: Debounce
 
     h.section("store · debounce del salvataggio")

@@ -265,25 +265,9 @@ struct SessionExerciseCard: View {
     /// suggerimento non è già applicato (carico o ripetizioni, vedi `kind`).
     private var hint: SessionPresentation.ProgressionHint? {
         guard let planItem else { return nil }
-        return SessionPresentation.progressionHint(suggestion(for: planItem), entry: entry)
-    }
-
-    /// Suggerimento di progressione per una voce della scheda.
-    ///
-    /// Di norma lo dà lo store. A corpo libero però `AppStore.progressionSuggestion`
-    /// cerca l'ultima sessione fra quelle con serie **di lavoro**, che escludono le
-    /// serie senza carico: lì non trova mai nulla. In quel caso l'ultima sessione si
-    /// prende dalle serie registrate (``Stats/loggedSets(for:in:)``) e si chiede il
-    /// suggerimento direttamente a `Stats`, con la stessa API pubblica.
-    private func suggestion(for planItem: PlanItem) -> Stats.ProgressionSuggestion? {
-        if let fromStore = app.store.progressionSuggestion(for: planItem) { return fromStore }
-        let last = app.store.sessions
-            .filter { !Stats.loggedSets(for: planItem.exerciseID, in: $0).isEmpty }
-            .max { $0.startedAt < $1.startedAt }
-        return Stats.progressionSuggestion(
-            for: planItem,
-            lastSession: last,
-            equipment: exercise?.equipment ?? ""
+        return SessionPresentation.progressionHint(
+            app.store.progressionSuggestion(for: planItem),
+            entry: entry
         )
     }
 }

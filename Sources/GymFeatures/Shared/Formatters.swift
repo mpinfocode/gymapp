@@ -175,20 +175,4 @@ public enum Formatters {
         "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
         "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre",
     ]
-
-    // MARK: - Compatibilità
-
-    /// **Deprecata.** Non fa più niente: restituisce il testo invariato.
-    ///
-    /// Serviva quando GymCore produceva il punto decimale. Ora ogni testo numerico
-    /// arriva già all'italiana da ``ItalianNumberFormat``, e sostituire i punti
-    /// sarebbe **dannoso**: rovinerebbe il separatore delle migliaia ("12.480 kg"
-    /// diventerebbe "12,480 kg"). Resta come no-op solo per non rompere i richiami
-    /// esistenti; va tolta (con le sue chiamate) appena possibile.
-    ///
-    /// Non è marcata `@available(deprecated:)` di proposito: farebbe comparire dei
-    /// warning nei file di un'altra feature, e la build deve restare senza warning.
-    public static func italianDecimals(_ text: String) -> String {
-        text
-    }
 }
