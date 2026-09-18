@@ -413,9 +413,10 @@ public struct PlanItemEditorSheet: View {
 
     private func move(by offset: Int) {
         guard let index, let items = day?.items, items.indices.contains(index + offset) else { return }
-        withAnimation(Theme.Motion.smooth) {
-            itemID = items[index + offset].id
-        }
+        // Nessuna animazione: passare all'esercizio successivo sostituisce tutto il
+        // contenuto della sheet, e animare un cambio così ampio significa ricomporre
+        // otto blocchi a ogni fotogramma per mezzo secondo. Il salto è più onesto.
+        itemID = items[index + offset].id
     }
 
     // MARK: - Scorciatoie

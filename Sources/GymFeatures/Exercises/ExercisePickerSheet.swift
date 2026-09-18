@@ -25,6 +25,9 @@ public struct ExercisePickerSheet: View {
     @State private var model = ExerciseSearchModel()
     /// Id scelti, nell'ordine di selezione (è l'ordine promesso a chi apre il picker).
     @State private var selection: [String] = []
+    /// Gli stessi id come insieme: la riga chiede "sono selezionato?" a ogni `body`,
+    /// e su una zona da ~290 righe una scansione lineare per riga si sente.
+    @State private var selectedIDs: Set<String> = []
     @State private var openedSection: ExerciseSection?
     @State private var equipment: Set<String> = []
     @State private var detail: PickerDetail?
@@ -178,8 +181,9 @@ public struct ExercisePickerSheet: View {
 
     @ViewBuilder
     private func row(_ exercise: Exercise) -> some View {
+        let presentation = app.rowPresentation(for: exercise)
         if excludedIDs.contains(exercise.id) {
-            ExerciseRowView(exercise: exercise) {
+            ExerciseRowView(presentation: presentation, imageURL: exercise.imageURL) {
                 Text("già presente")
                     .captionStyle(color: Theme.textTertiary)
             }
@@ -191,7 +195,7 @@ public struct ExercisePickerSheet: View {
                 Button {
                     detail = PickerDetail(id: exercise.id)
                 } label: {
-                    ExerciseRowView(exercise: exercise)
+                    ExerciseRowView(presentation: presentation, imageURL: exercise.imageURL)
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint(Text("Apre il dettaglio"))
@@ -221,7 +225,7 @@ public struct ExercisePickerSheet: View {
 
     // MARK: - Selezione
 
-    private func isSelected(_ id: String) -> Bool { selection.contains(id) }
+    private func isSelected(_ id: String) -> Bool { selectedIDs.contains(id) }
 
     private func isAdded(_ id: String) -> Bool {
         excludedIDs.contains(id) || (allowsMultipleSelection && isSelected(id))
@@ -232,10 +236,11 @@ public struct ExercisePickerSheet: View {
             pick([app.store.exercise(id: id)].compactMap { $0 })
             return
         }
-        if let index = selection.firstIndex(of: id) {
-            selection.remove(at: index)
+        if selectedIDs.remove(id) != nil {
+            selection.removeAll { $0 == id }
         } else {
             selection.append(id)
+            selectedIDs.insert(id)
         }
         Haptics.play(.selection)
     }
@@ -246,7 +251,7 @@ public struct ExercisePickerSheet: View {
             pick([app.store.exercise(id: id)].compactMap { $0 })
             return
         }
-        guard !isSelected(id) else { return }
+        guard selectedIDs.insert(id).inserted else { return }
         selection.append(id)
         Haptics.play(.success)
     }

@@ -26,6 +26,7 @@ public struct SettingsScreen: View {
                 preferences
                 offlineMedia
                 about
+                diagnostics
             }
             .padding(.horizontal, Theme.Spacing.page)
             .padding(.top, Theme.Spacing.l)
@@ -33,7 +34,7 @@ public struct SettingsScreen: View {
         }
         .pageBackground()
         .task {
-            name = app.store.settings.displayName
+            name = app.store.displayName
             await media.refreshSize()
         }
         .onDisappear { media.cancel() }
@@ -104,9 +105,9 @@ public struct SettingsScreen: View {
 
                 SettingsRow(title: "Recupero predefinito") {
                     SettingsStepper(
-                        value: Formatters.shortDuration(seconds: app.store.settings.defaultRestSeconds),
-                        canDecrease: app.store.settings.defaultRestSeconds > 15,
-                        canIncrease: app.store.settings.defaultRestSeconds < 600,
+                        value: Formatters.shortDuration(seconds: app.store.defaultRestSeconds),
+                        canDecrease: app.store.defaultRestSeconds > 15,
+                        canIncrease: app.store.defaultRestSeconds < 600,
                         decreaseLabel: "Riduci di 15 secondi",
                         increaseLabel: "Aumenta di 15 secondi",
                         onDecrease: { changeRest(by: -15) },
@@ -127,14 +128,14 @@ public struct SettingsScreen: View {
 
     private var unitBinding: Binding<WeightUnit> {
         Binding(
-            get: { app.store.settings.unit },
+            get: { app.store.unit },
             set: { value in app.store.updateSettings { $0.unit = value } }
         )
     }
 
     private var hapticsBinding: Binding<Bool> {
         Binding(
-            get: { app.store.settings.hapticsEnabled },
+            get: { app.store.hapticsEnabled },
             set: { value in app.store.updateSettings { $0.hapticsEnabled = value } }
         )
     }
@@ -255,6 +256,39 @@ public struct SettingsScreen: View {
                 .captionStyle(color: Theme.textTertiary)
                 .textSelection(.enabled)
         }
+    }
+
+    // MARK: - Diagnostica
+
+    /// Un solo interruttore, in fondo alla pagina: il contatore di fluidità in alto
+    /// a destra mentre si usa l'app.
+    ///
+    /// Lo stato **non** viene salvato: sta nel ``Router``, quindi si spegne da sé a
+    /// ogni avvio e non può restare acceso per dimenticanza. Spento non costa nulla
+    /// (la shell non crea nemmeno la view che misura).
+    private var diagnostics: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.m) {
+            Text("Diagnostica")
+                .overlineStyle()
+
+            SettingsGroup {
+                SettingsRow(title: "Mostra FPS") {
+                    Toggle("Mostra FPS", isOn: frameRateBinding)
+                        .labelsHidden()
+                        .tint(Theme.accent.deep)
+                }
+            }
+
+            Text("Si spegne a ogni avvio.")
+                .captionStyle(color: Theme.textTertiary)
+        }
+    }
+
+    private var frameRateBinding: Binding<Bool> {
+        Binding(
+            get: { app.router.showsFrameRate },
+            set: { app.router.showsFrameRate = $0 }
+        )
     }
 
     private static var appVersion: String {

@@ -15,6 +15,10 @@ public struct MeasuresScreen: View {
     @State private var editedEntry: BodyEntry?
     @State private var entryToDelete: BodyEntry?
     @State private var range: ChartRange = .month3
+    /// Serie, dominio e ultimo valore del grafico del peso: si ricalcolano in un
+    /// `.task(id:)`, mai dentro il `body`.
+    @State private var weightChart = BodyChartData()
+    @State private var weightCaption: String?
 
     /// Ancora in cima alla pagina, per il "scorri in cima" del ritocco del tab.
     private static let topID = "misure-top"
@@ -52,6 +56,7 @@ public struct MeasuresScreen: View {
             }
         }
         .pageBackground()
+        .task(id: chartSignature) { reloadWeightChart() }
         .sheet(isPresented: $isAddingEntry) {
             BodyEntrySheet(entry: nil, defaultDate: app.now)
         }
@@ -100,11 +105,7 @@ public struct MeasuresScreen: View {
 
     @ViewBuilder
     private var weightSection: some View {
-        let series = app.store.bodySeries(of: .weight)
-        if let latest = series.last {
-            let start = range.start(from: app.now, calendar: app.calendar)
-            let points = series.filter { $0.date >= start }
-
+        if let latest = weightChart.latest {
             VStack(alignment: .leading, spacing: Theme.Spacing.l) {
                 VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
                     Text("Peso corporeo")
@@ -120,8 +121,8 @@ public struct MeasuresScreen: View {
                             .foregroundStyle(Theme.textSecondary)
                     }
 
-                    if let caption = weightCaption(series: series, from: start) {
-                        Text(caption).captionStyle()
+                    if let weightCaption {
+                        Text(weightCaption).captionStyle()
                     }
                 }
                 .accessibilityElement(children: .combine)
@@ -129,7 +130,8 @@ public struct MeasuresScreen: View {
                 CapsuleSegmentedControl(values: ChartRange.allCases, selection: $range, title: \.title)
 
                 BodyMetricChart(
-                    points: points,
+                    points: weightChart.points,
+                    domain: weightChart.domain,
                     metric: .weight,
                     unit: app.unit,
                     calendar: app.calendar,
@@ -139,9 +141,24 @@ public struct MeasuresScreen: View {
         }
     }
 
+    // MARK: - Ricalcolo fuori dal body
+
+    /// Cambia solo quando cambia davvero il grafico: intervallo scelto, numero di
+    /// rilevazioni, unità o scheda attiva (che sposta la riga di variazione).
+    private var chartSignature: String {
+        "\(range.rawValue)|\(app.store.bodyEntries.count)|\(app.unit.rawValue)|\(app.store.activeProgramID?.uuidString ?? "")"
+    }
+
+    private func reloadWeightChart() {
+        let series = app.store.bodySeries(of: .weight)
+        let start = range.start(from: app.now, calendar: app.calendar)
+        weightChart = BodyChartData.make(series: series, from: start)
+        weightCaption = makeWeightCaption(from: start)
+    }
+
     /// Variazione dall'inizio della scheda attiva; se non c'è una scheda si ripiega
     /// sulla variazione nel periodo scelto.
-    private func weightCaption(series: [Stats.BodyPoint], from start: Date) -> String? {
+    private func makeWeightCaption(from start: Date) -> String? {
         if app.store.activeProgram != nil, let change = app.store.bodyChange(of: .weight) {
             return "\(BodyFormat.delta(change, unit: app.unit)) dall'inizio della scheda"
         }
@@ -178,7 +195,9 @@ public struct MeasuresScreen: View {
 
     @ViewBuilder
     private func entryList(_ entries: [BodyEntry]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // Pigra: con qualche anno di rilevazioni una `VStack` normale costruirebbe
+        // ogni riga (data formattata e riepilogo compresi) a ogni ridisegno.
+        LazyVStack(alignment: .leading, spacing: 0) {
             Text("Rilevazioni")
                 .overlineStyle()
                 .padding(.bottom, Theme.Spacing.s)

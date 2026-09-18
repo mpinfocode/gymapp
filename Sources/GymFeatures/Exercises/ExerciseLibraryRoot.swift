@@ -157,7 +157,7 @@ struct ExerciseLibraryRoot<Header: View, Row: View>: View {
     }
 
     private func recentExercises() -> [Exercise] {
-        ExerciseBrowseFormat.recents(ids: app.store.settings.recentExerciseIDs) {
+        ExerciseBrowseFormat.recents(ids: app.store.recentExerciseIDs) {
             app.store.exercise(id: $0)
         }
     }
@@ -166,19 +166,21 @@ struct ExerciseLibraryRoot<Header: View, Row: View>: View {
 
     /// Cambia solo quando cambia davvero la libreria consultabile: evita di
     /// ricontare 1.324 esercizi a ogni ridisegno.
+    ///
+    /// Il conteggio viene da ``AppStore/exerciseIndex`` e non più da
+    /// `searchableLibrary`, che per rispondere fonde due indici in uno.
     private var librarySignature: String {
-        let library = app.store.searchableLibrary?.count ?? 0
-        let favorites = app.store.settings.favoriteExerciseIDs.count
+        let library = app.store.exerciseIndex?.count ?? 0
+        let favorites = app.store.favoriteExerciseIDs.count
         return "\(library)-\(favorites)-\(app.store.availableCustomExercises.count)"
     }
 
     private func loadCounts() async {
-        guard let library = app.store.searchableLibrary else { return }
-        let favorites = app.store.settings.favoriteExerciseIDs
+        guard let snapshot = app.store.exerciseSearchSnapshot() else { return }
         let customCount = app.store.availableCustomExercises.count
 
         let computed = await Task.detached(priority: .userInitiated) {
-            let facets = library.facets(for: .empty, favorites: favorites)
+            let facets = snapshot.facets(for: .empty)
             var values: [String: Int] = [:]
             for facet in facets.muscleGroups {
                 values[ExerciseSection.group(facet.group).id] = facet.count
@@ -202,13 +204,12 @@ struct ExerciseLibraryRoot<Header: View, Row: View>: View {
         isSearching = true
         // Debounce: `task(id:)` cancella il tentativo precedente a ogni carattere.
         try? await Task.sleep(for: .milliseconds(200))
-        guard !Task.isCancelled, let library = app.store.searchableLibrary else { return }
+        guard !Task.isCancelled, let snapshot = app.store.exerciseSearchSnapshot() else { return }
 
         let filter = model.filter
-        let favorites = app.store.settings.favoriteExerciseIDs
         let limit = Self.searchLimit
         let found = await Task.detached(priority: .userInitiated) {
-            library.search(filter, favorites: favorites, limit: limit + 1)
+            snapshot.search(filter, limit: limit + 1)
         }.value
 
         guard !Task.isCancelled else { return }

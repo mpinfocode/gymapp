@@ -14,7 +14,6 @@ public struct ExercisesScreen: View {
     @Environment(AppEnvironment.self) private var app
 
     @State private var model: ExerciseSearchModel
-    @State private var openedSection: ExerciseSection?
     @State private var isCreatingCustom = false
     @State private var prefilledName = ""
 
@@ -28,17 +27,14 @@ public struct ExercisesScreen: View {
         _model = State(initialValue: preset)
     }
 
-    /// Init con una zona già aperta, sempre per gli screenshot.
-    public init(section: ExerciseSection) {
-        _model = State(initialValue: ExerciseSearchModel())
-        _openedSection = State(initialValue: section)
-    }
-
     public var body: some View {
         ExerciseLibraryRoot(
             model: $model,
             scrollTopTab: .exercises,
-            onOpen: { openedSection = $0 },
+            // La pagina della zona è una rotta condivisa, non una
+            // `navigationDestination(item:)` locale: così il ritocco dell'icona
+            // "Esercizi" (che svuota il path del tab) la chiude davvero.
+            onOpen: { app.router.push(.exerciseGroup($0)) },
             onCreateCustom: { name in
                 prefilledName = name
                 isCreatingCustom = true
@@ -46,7 +42,10 @@ public struct ExercisesScreen: View {
             header: { header },
             row: { exercise in
                 NavigationLink(value: AppRoute.exercise(id: exercise.id)) {
-                    ExerciseRowView(exercise: exercise) {
+                    ExerciseRowView(
+                        presentation: app.rowPresentation(for: exercise),
+                        imageURL: exercise.imageURL
+                    ) {
                         Image(systemName: "chevron.right")
                             .font(.system(.footnote, weight: .semibold))
                             .foregroundStyle(Theme.textTertiary)
@@ -56,11 +55,6 @@ public struct ExercisesScreen: View {
             }
         )
         .pageBackground()
-        // La pagina della zona è navigazione **locale**: non serve una rotta
-        // condivisa e la shell resta intatta.
-        .navigationDestination(item: $openedSection) { section in
-            ExerciseGroupScreen(section: section)
-        }
         .sheet(isPresented: $isCreatingCustom) {
             CustomExerciseFormSheet(prefilledName: prefilledName) { created in
                 model.query = created.displayName
@@ -98,6 +92,8 @@ public struct ExercisesScreen: View {
 /// attrezzo. Ci si arriva dalla radice di Esercizi.
 public struct ExerciseGroupScreen: View {
 
+    @Environment(AppEnvironment.self) private var app
+
     private let section: ExerciseSection
 
     @State private var equipment: Set<String> = []
@@ -118,7 +114,10 @@ public struct ExerciseGroupScreen: View {
             },
             row: { exercise in
                 NavigationLink(value: AppRoute.exercise(id: exercise.id)) {
-                    ExerciseRowView(exercise: exercise) {
+                    ExerciseRowView(
+                        presentation: app.rowPresentation(for: exercise),
+                        imageURL: exercise.imageURL
+                    ) {
                         Image(systemName: "chevron.right")
                             .font(.system(.footnote, weight: .semibold))
                             .foregroundStyle(Theme.textTertiary)

@@ -54,7 +54,9 @@ struct ExercisesVariantScene: View {
         case .catalog:
             ExercisesScreen()
         case .group:
-            ExercisesScreen(section: .group(.chest))
+            // La pagina della zona è ora una rotta spinta (`AppRoute.exerciseGroup`):
+            // la scena rende direttamente la destinazione, come fa la shell.
+            ExerciseGroupScreen(section: .group(.chest))
         case .customForm:
             CustomExerciseFormSheet(prefilledName: "Face Pull")
         case .customDetail:

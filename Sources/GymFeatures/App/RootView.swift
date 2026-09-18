@@ -137,10 +137,24 @@ private struct LaunchView: View {
 
 /// Shell a tab: quattro `NavigationStack`, tab bar flottante **sempre visibile** e
 /// foglio delle Impostazioni.
+///
+/// ## Regola di invalidazione (la ragione per cui questo file è fatto così)
+///
+/// `AppShell.body` non legge **niente** di osservabile. Ogni dipendenza sta nella
+/// view più piccola che può averla:
+///
+/// - il tab selezionato lo leggono ``TabSlot`` (uno per tab) e ``ShellTabBar``;
+/// - il path di ogni tab lo legge il suo `NavigationStack`, tramite un binding che
+///   non viene mai *letto* qui;
+/// - la presentazione delle Impostazioni e la sincronizzazione delle vibrazioni
+///   stanno in ``ShellSideEffects``, una view invisibile;
+/// - il contatore di fluidità sta in ``ShellFrameRate``.
+///
+/// Prima bastava cambiare tab per rivalutare il body della shell **e** quello dei
+/// quattro tab: su iPhone si vedeva, ed era il costo più alto dell'app.
 private struct AppShell: View {
 
     @Environment(AppEnvironment.self) private var app
-    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         @Bindable var router = app.router
@@ -151,11 +165,19 @@ private struct AppShell: View {
             // cambia tab. Smontarli sarebbe più economico ma SwiftUI non sa
             // ripristinare l'offset di scroll di una gerarchia distrutta: si
             // tornerebbe in cima a ogni giro di tab. Il lavoro inutile dei tab
-            // nascosti si elimina invece mettendoli in pausa (vedi `tabStack`).
-            tabStack(.home, path: $router.homePath) { HomeScreen() }
-            tabStack(.program, path: $router.programPath) { ProgramScreen() }
-            tabStack(.exercises, path: $router.exercisesPath) { ExercisesScreen() }
-            tabStack(.measures, path: $router.measuresPath) { MeasuresScreen() }
+            // nascosti si elimina invece mettendoli in pausa (vedi `TabSlot`).
+            TabSlot(tab: .home) {
+                NavigationStack(path: $router.homePath) { tabRoot { HomeScreen() } }
+            }
+            TabSlot(tab: .program) {
+                NavigationStack(path: $router.programPath) { tabRoot { ProgramScreen() } }
+            }
+            TabSlot(tab: .exercises) {
+                NavigationStack(path: $router.exercisesPath) { tabRoot { ExercisesScreen() } }
+            }
+            TabSlot(tab: .measures) {
+                NavigationStack(path: $router.measuresPath) { tabRoot { MeasuresScreen() } }
+            }
         }
         // Lo sfondo sta dietro, non dentro lo stack: un figlio con
         // `ignoresSafeArea` in uno ZStack può far crescere il contenitore e
@@ -164,84 +186,99 @@ private struct AppShell: View {
         // La barra è disegnata SOPRA gli stack, non come loro inset: lo spazio se
         // lo prende ogni stack con `tabBarSafeArea()`, che vale anche per le
         // pagine spinte (vedi il commento del modificatore).
-        .overlay(alignment: .bottom) { tabBar }
-        // Le Impostazioni sono un foglio della shell: qualunque schermata le apre
-        // con `app.router.presentSettings()`.
-        .sheet(isPresented: $router.isPresentingSettings) {
-            SettingsScreen()
-                .environment(app)
-        }
-        .onChange(of: app.store.settings.hapticsEnabled, initial: true) { _, enabled in
-            Haptics.isEnabled = enabled
-        }
-        .onChange(of: scenePhase) { _, phase in
-            guard phase != .active else { return }
-            let store = app.store
-            Task { await store.flush() }
-        }
+        .overlay(alignment: .bottom) { ShellTabBar() }
+        // Foglio delle Impostazioni e sincronizzazioni: fuori dal body della shell,
+        // così accenderle non ridisegna i quattro tab.
+        .background { ShellSideEffects() }
+        .overlay { ShellFrameRate() }
     }
 
-    // MARK: - Tab
-
+    /// Radice di un tab: il contenuto più le destinazioni, installate una volta sola.
     @ViewBuilder
-    private func tabStack<Content: View>(
-        _ tab: AppTab,
-        path: Binding<[AppRoute]>,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        let isSelected = app.router.tab == tab
-        NavigationStack(path: path) {
-            content()
-                .navigationDestination(for: AppRoute.self) { route in
-                    destination(route)
-                }
-        }
-        // Lo spazio della tab bar si riserva QUI, fuori dal `NavigationStack`: la
-        // safe area ridotta vale così anche per le pagine spinte e per i loro
-        // `safeAreaInset(edge: .bottom)`, che finiscono sopra la barra invece che
-        // sotto. Applicarlo dentro le singole schermate lo farebbe dimenticare
-        // proprio alla prima pagina spinta con un bottone ancorato in basso.
-        .tabBarSafeArea()
-        .opacity(isSelected ? 1 : 0)
-        .allowsHitTesting(isSelected)
-        .accessibilityHidden(!isSelected)
-        .zIndex(isSelected ? 1 : 0)
-        // Un tab nascosto resta montato ma non deve lavorare: gradienti e GIF
-        // si fermano finché non torna visibile.
-        .blobAnimationPaused(!isSelected)
-        // Il cambio di tab è **istantaneo**: nessuna dissolvenza fra due
-        // schermate intere. La pillola della tab bar si sposta comunque con la
-        // sua animazione breve, perché è fuori da questo sottoalbero.
-        .animation(nil, value: app.router.tab)
+    private func tabRoot<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
+            .navigationDestination(for: AppRoute.self) { route in
+                AppShell.destination(route)
+            }
     }
 
     /// Le pagine spinte, tutte in un punto solo.
     @ViewBuilder
-    private func destination(_ route: AppRoute) -> some View {
+    static func destination(_ route: AppRoute) -> some View {
         switch route {
-        case .exercise(let id): ExerciseDetailScreen(exerciseID: id)
-        case .programDay(let programID, let dayID): ProgramDayEditor(programID: programID, dayID: dayID)
-        case .programArchive: ProgramArchiveScreen()
-        case .bodyMetric(let metric): BodyMetricDetailScreen(metric: metric)
+        case .exercise(let id):
+            ExerciseDetailScreen(exerciseID: id)
+        case .programDay(let programID, let dayID):
+            ProgramDayEditor(programID: programID, dayID: dayID)
+        case .programArchive:
+            ProgramArchiveScreen()
+        case .bodyMetric(let metric):
+            BodyMetricDetailScreen(metric: metric)
+        case .exerciseGroup(let section):
+            ExerciseGroupScreen(section: section)
+        case .planItem(let programID, let dayID, let itemID):
+            PlanItemDetailScreen(
+                context: PlanItemContext(programID: programID, dayID: dayID, itemID: itemID)
+            )
         }
     }
+}
 
-    // MARK: - Tab bar
+/// Un tab dentro la shell: è **questa** view, e non la shell, a leggere
+/// `router.tab`.
+///
+/// Il contenuto arriva già costruito dal padre: quando il tab cambia si rivaluta
+/// solo questo body (tre modificatori e un confronto), mentre il sottoalbero del
+/// tab resta identico e SwiftUI non lo tocca.
+private struct TabSlot<Content: View>: View {
 
-    /// Sempre visibile, anche nelle pagine spinte: è l'unico modo per ritoccare
-    /// l'icona di un tab e tornare alla sua radice da qualunque profondità.
-    private var tabBar: some View {
-        FloatingTabBar(items: AppTab.tabItems, selection: tabSelection)
+    @Environment(AppEnvironment.self) private var app
+
+    let tab: AppTab
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        let isSelected = app.router.tab == tab
+        content
+            // Lo spazio della tab bar si riserva QUI, fuori dal `NavigationStack`:
+            // la safe area ridotta vale così anche per le pagine spinte e per i
+            // loro `safeAreaInset(edge: .bottom)`, che finiscono sopra la barra
+            // invece che sotto. Applicarlo dentro le singole schermate lo farebbe
+            // dimenticare proprio alla prima pagina spinta con un bottone in basso.
+            .tabBarSafeArea()
+            .opacity(isSelected ? 1 : 0)
+            .allowsHitTesting(isSelected)
+            .accessibilityHidden(!isSelected)
+            .zIndex(isSelected ? 1 : 0)
+            // Un tab nascosto resta montato ma non deve lavorare: gradienti e GIF
+            // si fermano finché non torna visibile.
+            .blobAnimationPaused(!isSelected)
+            // Il cambio di tab è **istantaneo**: nessuna dissolvenza fra due
+            // schermate intere. La pillola della tab bar si sposta comunque con la
+            // sua animazione breve, perché è fuori da questo sottoalbero.
+            .animation(nil, value: isSelected)
+    }
+}
+
+/// La tab bar flottante: sempre visibile, anche nelle pagine spinte, perché è
+/// l'unico modo per ritoccare l'icona di un tab da qualunque profondità.
+///
+/// Legge `router.tab` per conto suo: cambiare tab anima la pillola qui dentro e
+/// non tocca il resto della shell.
+private struct ShellTabBar: View {
+
+    @Environment(AppEnvironment.self) private var app
+
+    var body: some View {
+        FloatingTabBar(items: AppTab.tabItems, selection: selection)
             .padding(.horizontal, Theme.Spacing.page)
             .padding(.bottom, FloatingTabBarMetrics.bottomMargin)
     }
 
-    /// Il tab si cambia senza animare il contenuto (vedi `tabStack`).
-    ///
     /// Il **ritocco** di un tab già selezionato passa da ``Router/reselect(_:)``:
     /// torna alla radice della sezione oppure, se è già alla radice, chiede alla
     /// schermata di scorrere in cima.
-    private var tabSelection: Binding<AppTab> {
+    private var selection: Binding<AppTab> {
         Binding(
             get: { app.router.tab },
             set: { newValue in
@@ -252,6 +289,54 @@ private struct AppShell: View {
                 app.router.tab = newValue
             }
         )
+    }
+}
+
+/// Foglio delle Impostazioni e sincronizzazioni della shell, in una view che non
+/// disegna niente.
+///
+/// Sta qui e non su `AppShell` perché `onChange(of:)` **legge** il valore dentro il
+/// body: `app.store.hapticsEnabled` sulla shell avrebbe invalidato i quattro tab a
+/// ogni cambio di preferenza (e con `store.settings`, la vecchia lettura larga,
+/// perfino aprendo un esercizio, che scrive i recenti).
+private struct ShellSideEffects: View {
+
+    @Environment(AppEnvironment.self) private var app
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        @Bindable var router = app.router
+
+        Color.clear
+            .accessibilityHidden(true)
+            .sheet(isPresented: $router.isPresentingSettings) {
+                SettingsScreen()
+                    .environment(app)
+            }
+            .onChange(of: app.store.hapticsEnabled, initial: true) { _, enabled in
+                Haptics.isEnabled = enabled
+            }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase != .active else { return }
+                let store = app.store
+                Task { await store.flush() }
+            }
+    }
+}
+
+/// Contatore di fluidità (Impostazioni → Diagnostica).
+///
+/// Spento non esiste: nessun `CADisplayLink`, nessun timer, nessun ridisegno. È
+/// una view a sé perché l'interruttore non deve invalidare la shell.
+private struct ShellFrameRate: View {
+
+    @Environment(AppEnvironment.self) private var app
+
+    var body: some View {
+        Color.clear
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .frameRateOverlay(app.router.showsFrameRate)
     }
 }
 

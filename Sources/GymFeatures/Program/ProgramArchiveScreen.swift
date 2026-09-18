@@ -18,18 +18,22 @@ public struct ProgramArchiveScreen: View {
     public init() {}
 
     public var body: some View {
+        // Filtrate una volta sola: `archivedPrograms` scorre tutte le schede a ogni
+        // lettura, e prima ne facevamo due per ridisegno.
+        let archived = app.store.archivedPrograms
+
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Spacing.l) {
                 Text("Archivio")
                     .sectionTitleStyle()
                     .accessibilityAddTraits(.isHeader)
 
-                if app.store.archivedPrograms.isEmpty {
+                if archived.isEmpty {
                     Text("Nessuna scheda in archivio.")
                         .font(.captionText)
                         .foregroundStyle(Theme.textSecondary)
                 } else {
-                    ForEach(app.store.archivedPrograms) { program in
+                    ForEach(archived) { program in
                         row(program)
                     }
                 }

@@ -167,7 +167,11 @@ public struct ProgramDayEditor: View {
     private func row(_ item: PlanItem, letter: String?) -> some View {
         let summary = ProgramPresentation.itemSummary(item, unit: app.unit)
         if let exercise = app.store.exercise(id: item.exerciseID) {
-            ExerciseRowView(exercise: exercise, subtitle: summary) {
+            ExerciseRowView(
+                presentation: app.rowPresentation(for: exercise),
+                imageURL: exercise.imageURL,
+                subtitle: summary
+            ) {
                 supersetBadge(letter)
             }
         } else {

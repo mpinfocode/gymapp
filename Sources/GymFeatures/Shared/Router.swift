@@ -25,6 +25,15 @@ public enum AppRoute: Hashable, Sendable {
     case programArchive
     /// Dettaglio di una metrica corporea (grafico grande e valori).
     case bodyMetric(BodyMetricKind)
+    /// Elenco degli esercizi di una sezione (zona colpita, preferiti, i propri).
+    ///
+    /// È una pagina spinta come le altre, non una `navigationDestination(item:)`
+    /// locale: solo così ``Router/popToRoot(_:)`` (e quindi il ritocco del tab) la
+    /// chiude davvero invece di lasciarla aperta sopra una radice già svuotata.
+    case exerciseGroup(ExerciseSection)
+    /// Dettaglio di un esercizio aperto da una riga della scheda: in testa la
+    /// prescrizione ("La tua scheda") con il carico ritoccabile.
+    case planItem(programID: UUID, dayID: UUID, itemID: UUID)
 }
 
 /// Navigazione condivisa: tab selezionato, path di ogni `NavigationStack`,
@@ -40,6 +49,13 @@ public final class Router {
     /// non da una singola schermata: così qualunque tab può aprirle con
     /// ``presentSettings()`` senza duplicare il foglio.
     public var isPresentingSettings = false
+
+    /// Contatore di fluidità in alto a destra (Impostazioni → Diagnostica).
+    ///
+    /// Stato di **sessione**: non viene salvato, così si spegne da sé a ogni avvio e
+    /// non resta mai acceso per sbaglio. Spento non costa nulla: la shell non crea
+    /// nemmeno la view che misura.
+    public var showsFrameRate = false
 
     public var homePath: [AppRoute] = []
     public var programPath: [AppRoute] = []

@@ -13,7 +13,7 @@ struct MeasuresScreen: View {
     @Environment(AppEnvironment.self) private var app
 
     var body: some View {
-        Text(app.store.settings.displayName)
+        Text(app.store.displayName)
     }
 }
 ```
@@ -23,6 +23,7 @@ Da lì si passa per tutto il resto:
 | accesso | cosa dà |
 | --- | --- |
 | `app.store` | `AppStore`: dati e mutazioni (è `@Observable`, l'osservazione funziona anche annidata) |
+| `app.rowPresentation(for:)` | titolo e sottoriga già pronti per una riga di lista |
 | `app.exercises` | `ExerciseRepository`, `nil` finché la libreria non è pronta |
 | `app.exercise(id:)` | un singolo esercizio |
 | `app.now` | "adesso" secondo la sorgente di tempo dello store (fissa negli screenshot) |
@@ -33,6 +34,27 @@ Da lì si passa per tutto il resto:
 **Non** usare `@Environment(AppStore.self)`: lo store non viene iniettato da solo e
 quella lettura va in crash a runtime. Mai leggere l'orologio di sistema con `Date()`
 dentro una schermata: usare `app.now`, altrimenti gli screenshot non sono riproducibili.
+
+## Fluidità: dove stanno le dipendenze osservate
+
+FLUIDITÀ è la priorità n.1 (SPEC §0) e il costo più alto non è il calcolo: sono le
+**invalidazioni**. Tre regole, valide ovunque.
+
+1. **Ogni dipendenza osservata sta nella view più piccola che può averla.** Se un
+   valore serve solo a una riga, non si legge nel body della pagina. `RootView` è
+   l'esempio: `AppShell.body` non legge niente, il tab lo leggono `TabSlot` e la tab
+   bar, il foglio delle Impostazioni e le vibrazioni stanno in una view invisibile.
+   Attenzione a `onChange(of:)`: il valore lo **legge il body** che lo ospita.
+2. **Mai `app.store.settings.X` in un `body`.** `settings` ricostruisce il DTO e
+   crea una dipendenza larga: chi la legge viene invalidato anche solo perché è
+   cambiato l'elenco dei recenti. Si leggono le proprietà granulari
+   (`displayName`, `unit`, `defaultRestSeconds`, `favoriteExerciseIDs`,
+   `recentExerciseIDs`, `hapticsEnabled`, `activeProgramID`). `updateSettings { }`
+   resta il modo di scrivere.
+3. **Nel `body` non si calcola.** Ricerche, facet, ordinamenti, serie e domini dei
+   grafici stanno in `@State` aggiornati da `.task(id: signature)`; la firma cambia
+   solo quando cambia davvero il risultato. Il lavoro lungo va in
+   `Task.detached` con `store.exerciseSearchSnapshot()`, che è `Sendable`.
 
 ## Struttura delle cartelle
 
@@ -88,10 +110,13 @@ app.router.openExercise(id: "0025")                                 // anche da 
 ```
 
 Rotte disponibili: `.exercise(id:)`, `.programDay(programID:dayID:)`,
-`.programArchive`, `.bodyMetric(_:)`.
+`.programArchive`, `.bodyMetric(_:)`, `.exerciseGroup(_:)`,
+`.planItem(programID:dayID:itemID:)`.
 
 La navigazione **modale** di una feature (editor, picker, sheet) resta locale:
-niente rotte nuove per una sheet.
+niente rotte nuove per una sheet. Una pagina **spinta**, invece, è sempre una rotta:
+una `navigationDestination(item:)` locale dentro uno stack con `path:` vincolato al
+Router sopravvive a `popToRoot`, e il ritocco del tab non riporta più alla radice.
 
 ## Impostazioni
 
@@ -146,13 +171,8 @@ API del `Router`: `reselect(_ tab:)`, `scrollToTopToken(for: AppTab) -> Int`,
 `popToRoot(_ tab:)`, `popToRoot()`. `MeasuresScreen` è già agganciata; le radici di
 **Home**, **Scheda** ed **Esercizi** devono agganciarsi allo stesso modo.
 
-> **Limite noto (richiesta per GymUI)**: `FloatingTabBar` ignora il tocco sulla tab
-> già selezionata (`guard !isSelected else { return }` in `tabButton`), quindi il
-> `set` del binding non viene mai chiamato e il ritocco non arriva alla shell. Serve
-> una modifica in GymUI: togliere quel `guard` (riassegnando comunque `selection`)
-> oppure aggiungere `onReselect: ((ID) -> Void)?` all'inizializzatore. Tutto il resto
-> della catena (binding, `reselect`, token, aggancio di Misure) è già pronto e
-> funzionerà senza altre modifiche.
+`FloatingTabBar` riassegna `selection` anche sul ritocco della tab già attiva (ed
+espone `onReselect:`), quindi la catena binding → `reselect` → token funziona.
 
 ## Come aggiungere una schermata
 
@@ -174,7 +194,9 @@ esterne. Le API solo-iOS vanno in `#if os(iOS)` piccoli e banali (vedi
 ## Mattoni condivisi
 
 - `ExerciseRowView(exercise:subtitle:accessory:)`: thumbnail + nome + "muscolo · attrezzo",
-  accessorio trailing libero.
+  accessorio trailing libero. Nelle **liste** si usa
+  `ExerciseRowView(presentation:imageURL:)` con `app.rowPresentation(for:)`: titolo e
+  sottoriga arrivano già calcolati dall'indice invece di essere ricostruiti a ogni `body`.
 - `Formatters`: pesi con virgola italiana (`weight`), cronometro (`clock` → "05:30"),
   durate (`minutes` → "45 min"), date relative (`relativeDay` → "oggi" / "ieri" /
   "lun 14 set"). Valore mancante: `Formatters.missing` ("·"), mai "—".

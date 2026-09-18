@@ -8,6 +8,16 @@ import GymUI
 /// Gli esercizi "canonici" vengono prima, le varianti ridondanti del dataset dopo
 /// (SPEC §2, punto 4). Ricerca e facet girano fuori dal main thread e si rifanno solo
 /// quando cambia davvero qualcosa.
+///
+/// ## Perché una `List` e non una `LazyVStack`
+/// Una zona arriva a ~290 righe, ognuna con una thumbnail remota. Una `LazyVStack`
+/// dentro una `ScrollView` crea le righe pigramente ma le tiene tutte vive una volta
+/// create: scorrendo avanti e indietro la gerarchia cresce e non torna più indietro.
+/// La `List` in stile `plain` ricicla le celle come ha sempre fatto UIKit: il numero
+/// di righe montate resta quello che si vede, le thumbnail fuori schermo rilasciano
+/// la loro bitmap e la memoria è costante. In cambio serve mettere testata e chip
+/// dentro la lista come righe: costo basso, sfondo trasparente e separatori nascosti
+/// li rendono indistinguibili da prima.
 struct ExerciseGroupList<Header: View, Row: View>: View {
 
     @Environment(AppEnvironment.self) private var app
@@ -22,10 +32,11 @@ struct ExerciseGroupList<Header: View, Row: View>: View {
     @State private var chips: [FacetCount] = []
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
+        List {
+            Group {
                 header()
                     .padding(.horizontal, Theme.Spacing.page)
+                    .padding(.top, Theme.Spacing.s)
 
                 if !chips.isEmpty {
                     equipmentChips
@@ -46,17 +57,27 @@ struct ExerciseGroupList<Header: View, Row: View>: View {
                         .captionStyle(color: Theme.textTertiary)
                         .padding(.horizontal, Theme.Spacing.page)
                         .padding(.top, Theme.Spacing.l)
-
-                    LazyVStack(alignment: .leading, spacing: Theme.Spacing.l) {
-                        ForEach(results) { row($0) }
-                    }
-                    .padding(.horizontal, Theme.Spacing.page)
-                    .padding(.top, Theme.Spacing.l)
+                        .padding(.bottom, Theme.Spacing.s)
                 }
             }
-            .padding(.top, Theme.Spacing.s)
-            .padding(.bottom, Theme.Spacing.xxxl)
+            .plainListRow()
+
+            ForEach(results) { exercise in
+                row(exercise)
+                    .padding(.horizontal, Theme.Spacing.page)
+                    .padding(.vertical, Theme.Spacing.s)
+                    .plainListRow()
+            }
+
+            // Ultima riga sempre raggiungibile: lo spazio della tab bar lo riserva
+            // già la shell, qui basta il respiro di fine pagina.
+            Color.clear
+                .frame(height: Theme.Spacing.l)
+                .plainListRow()
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .environment(\.defaultMinListRowHeight, 1)
         .task(id: signature) { await load() }
     }
 
@@ -85,10 +106,15 @@ struct ExerciseGroupList<Header: View, Row: View>: View {
 
     // MARK: - Caricamento
 
+    /// Cambia solo quando cambia davvero cosa c'è da mostrare.
+    ///
+    /// Il conteggio arriva da ``AppStore/exerciseIndex``, che non copia niente, e i
+    /// preferiti si leggono dalla proprietà granulare: aprire un esercizio (che
+    /// scrive i recenti) non rifà la ricerca.
     private var signature: String {
         let selected = equipment.sorted().joined(separator: ",")
-        let library = app.store.searchableLibrary?.count ?? 0
-        return "\(section.id)|\(selected)|\(library)|\(app.store.settings.favoriteExerciseIDs.count)"
+        let library = app.store.exerciseIndex?.count ?? 0
+        return "\(section.id)|\(selected)|\(library)|\(app.store.favoriteExerciseIDs.count)"
     }
 
     private func load() async {
@@ -97,21 +123,32 @@ struct ExerciseGroupList<Header: View, Row: View>: View {
             chips = []
             return
         }
-        guard let library = app.store.searchableLibrary else { return }
+        guard let snapshot = app.store.exerciseSearchSnapshot() else { return }
 
-        let favorites = app.store.settings.favoriteExerciseIDs
         var filter = section.filter
         let baseFilter = filter
         filter.equipment = equipment
+        let searchFilter = filter
 
         let outcome = await Task.detached(priority: .userInitiated) {
-            let found = library.search(filter, favorites: favorites)
-            let facets = library.facets(for: baseFilter, favorites: favorites)
+            let found = snapshot.search(searchFilter)
+            let facets = snapshot.facets(for: baseFilter)
             return (ExerciseListOrder.sorted(found), facets.equipment)
         }.value
 
         guard !Task.isCancelled else { return }
         results = outcome.0
         chips = outcome.1
+    }
+}
+
+extension View {
+
+    /// Riga di `List` senza decorazioni: niente sfondo, niente separatore, niente
+    /// margini di sistema. Le liste dell'app disegnano tutto da sé.
+    func plainListRow() -> some View {
+        listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
     }
 }

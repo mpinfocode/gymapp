@@ -74,7 +74,10 @@ public struct ExerciseDetailScreen: View {
             }
         }
         .pageBackground()
-        .onAppear { app.store.markRecent(exerciseID) }
+        // "Recenti" si aggiorna a transizione finita, non durante il push: scrivere
+        // nello store mentre la pagina sta entrando invalidava la radice della
+        // libreria proprio mentre l'animazione era in corso, e lo scatto si vedeva.
+        .task(id: exerciseID) { await markRecentAfterTransition() }
         .sheet(isPresented: $isAddingToProgram) {
             if let exercise = app.store.exercise(id: exerciseID) {
                 AddToProgramSheet(exercise: exercise)
@@ -89,6 +92,15 @@ public struct ExerciseDetailScreen: View {
         } message: {
             Text("Se è già stato usato resta nelle schede, ma sparisce dalla ricerca.")
         }
+    }
+
+    /// Segna l'esercizio fra i recenti **dopo** la transizione di navigazione
+    /// (~400 ms, poco più della push di sistema). Se si torna indietro prima, il
+    /// task viene cancellato e non si scrive niente.
+    private func markRecentAfterTransition() async {
+        try? await Task.sleep(for: .milliseconds(400))
+        guard !Task.isCancelled else { return }
+        app.store.markRecent(exerciseID)
     }
 
     // MARK: - Contenuto
@@ -168,7 +180,11 @@ public struct ExerciseDetailScreen: View {
                 AnimatedGIFView(
                     url: exercise.gifURL,
                     side: Theme.Size.maxMediaSide,
-                    accessibilityTitle: "Esecuzione di \(exercise.shortDisplayName)"
+                    accessibilityTitle: "Esecuzione di \(exercise.shortDisplayName)",
+                    // La thumbnail della riga da cui si arriva è già decodificata in
+                    // memoria: la tile si riempie subito invece di partire da un
+                    // riquadro vuoto mentre la GIF si scarica.
+                    posterURL: exercise.imageURL
                 )
             }
             Spacer(minLength: 0)

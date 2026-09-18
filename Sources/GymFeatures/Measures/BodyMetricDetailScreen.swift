@@ -11,16 +11,17 @@ public struct BodyMetricDetailScreen: View {
     private let metric: BodyMetricKind
 
     @State private var range: ChartRange = .month3
+    /// Serie, dominio e valori del grafico: calcolati in un `.task(id:)`, mai nel `body`.
+    @State private var chart = BodyChartData()
+    @State private var rows: [Stats.BodyPoint] = []
+    @State private var periodChange: String?
+    @State private var programChange: String?
 
     public init(metric: BodyMetricKind) {
         self.metric = metric
     }
 
     public var body: some View {
-        let series = app.store.bodySeries(of: metric)
-        let start = range.start(from: app.now, calendar: app.calendar)
-        let points = series.filter { $0.date >= start }
-
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
                 Text(metric.displayName)
@@ -29,34 +30,50 @@ public struct BodyMetricDetailScreen: View {
 
                 CapsuleSegmentedControl(values: ChartRange.allCases, selection: $range, title: \.title)
 
-                summary(series: series, from: start)
+                summary
 
                 BodyMetricChart(
-                    points: points,
+                    points: chart.points,
+                    domain: chart.domain,
                     metric: metric,
                     unit: app.unit,
                     calendar: app.calendar
                 )
 
-                list(points.isEmpty ? series : points)
+                list
             }
             .padding(.horizontal, Theme.Spacing.page)
             .padding(.top, Theme.Spacing.l)
             .padding(.bottom, Theme.Spacing.xxxl)
         }
         .pageBackground()
+        .task(id: signature) { reload() }
+    }
+
+    // MARK: - Ricalcolo fuori dal body
+
+    private var signature: String {
+        "\(range.rawValue)|\(app.store.bodyEntries.count)|\(app.unit.rawValue)|\(app.store.activeProgramID?.uuidString ?? "")"
+    }
+
+    private func reload() {
+        let series = app.store.bodySeries(of: metric)
+        let start = range.start(from: app.now, calendar: app.calendar)
+        chart = BodyChartData.make(series: series, from: start)
+        rows = Array((chart.points.isEmpty ? series : chart.points).reversed())
+        periodChange = Stats.bodyChange(of: metric, in: app.store.bodyEntries, since: start)
+            .map { "\(BodyFormat.delta($0, unit: app.unit)) \(range.periodText)" }
+        programChange = app.store.activeProgram == nil
+            ? nil
+            : app.store.bodyChange(of: metric).map { "\(BodyFormat.delta($0, unit: app.unit)) dall'inizio della scheda" }
     }
 
     // MARK: - Valore corrente e variazioni
 
-    @ViewBuilder
-    private func summary(series: [Stats.BodyPoint], from start: Date) -> some View {
-        let periodChange = Stats.bodyChange(of: metric, in: app.store.bodyEntries, since: start)
-        let programChange = app.store.activeProgram == nil ? nil : app.store.bodyChange(of: metric)
-
+    private var summary: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
             HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.s) {
-                Text(series.last.map { BodyFormat.number($0.value, metric: metric, unit: app.unit) } ?? Formatters.missing)
+                Text(chart.latest.map { BodyFormat.number($0.value, metric: metric, unit: app.unit) } ?? Formatters.missing)
                     .hugeNumberStyle()
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
@@ -66,11 +83,10 @@ public struct BodyMetricDetailScreen: View {
             }
 
             if let periodChange {
-                Text("\(BodyFormat.delta(periodChange, unit: app.unit)) \(range.periodText)")
-                    .captionStyle()
+                Text(periodChange).captionStyle()
             }
             if let programChange {
-                Text("\(BodyFormat.delta(programChange, unit: app.unit)) dall'inizio della scheda")
+                Text(programChange)
                     .captionStyle(color: Theme.textTertiary)
             }
         }
@@ -80,10 +96,9 @@ public struct BodyMetricDetailScreen: View {
     // MARK: - Elenco dei valori
 
     @ViewBuilder
-    private func list(_ points: [Stats.BodyPoint]) -> some View {
-        let rows = Array(points.reversed())
+    private var list: some View {
         if !rows.isEmpty {
-            VStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 0) {
                 Text("Valori")
                     .overlineStyle()
                     .padding(.bottom, Theme.Spacing.s)

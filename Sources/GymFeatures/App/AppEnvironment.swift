@@ -80,6 +80,17 @@ public final class AppEnvironment {
     /// Un esercizio per id del dataset, `nil` se la libreria non è pronta o l'id non esiste.
     public func exercise(id: String) -> Exercise? { store.exercises?.exercise(id: id) }
 
+    /// Titolo e sottoriga di una riga di lista, **presi dall'indice** invece che
+    /// ricostruiti (vedi ``GymCore/ExercisePresentation``).
+    ///
+    /// È una ricerca in un dizionario; la costruzione dalle stringhe dell'esercizio
+    /// resta solo come ripiego per un personalizzato eliminato, che nell'indice non
+    /// c'è più. Usarla ovunque compaia una riga: con 290 righe di una zona la
+    /// differenza si sente sotto il dito.
+    public func rowPresentation(for exercise: Exercise) -> ExercisePresentation {
+        store.exercisePresentation(id: exercise.id) ?? ExercisePresentation(exercise: exercise)
+    }
+
     /// Istante corrente secondo la sorgente di tempo dello store (fissa negli screenshot).
     public var now: Date { store.currentDate }
 
@@ -87,7 +98,11 @@ public final class AppEnvironment {
     public var calendar: Calendar { store.calendar }
 
     /// Unità di misura scelta dall'utente, per i formattatori.
-    public var unit: WeightUnit { store.settings.unit }
+    ///
+    /// Legge la proprietà **granulare** dello store, non `store.settings`: quella è
+    /// una dipendenza larga e chi mostra un carico verrebbe invalidato anche solo
+    /// perché è cambiato l'elenco degli esercizi recenti.
+    public var unit: WeightUnit { store.unit }
 
     // MARK: - Avvio
 

@@ -15,6 +15,9 @@ import GymUI
 struct BodyMetricChart: View {
 
     let points: [Stats.BodyPoint]
+    /// Scala verticale, calcolata **fuori** dal body (vedi ``BodyChartData``): un
+    /// dominio ricavato qui cambierebbe a ogni ridisegno e farebbe ballare la curva.
+    let domain: ClosedRange<Double>
     let metric: BodyMetricKind
     let unit: WeightUnit
     let calendar: Calendar
@@ -65,6 +68,11 @@ struct BodyMetricChart: View {
                 }
             }
             .frame(height: height)
+            // Cambiare intervallo non è un movimento: la curva si sostituisce,
+            // non si deforma. Senza questo, l'animazione del segmento scelto si
+            // propagava al grafico e per mezzo secondo si interpolavano decine di
+            // punti a ogni fotogramma.
+            .transaction { $0.animation = nil }
             .accessibilityLabel(Text(metric.displayName))
         } else {
             Text("Servono almeno due rilevazioni nel periodo")
@@ -72,15 +80,40 @@ struct BodyMetricChart: View {
                 .frame(maxWidth: .infinity, minHeight: height, alignment: .center)
         }
     }
+}
 
-    /// Scala verticale con un po' d'aria sopra e sotto: una variazione di mezzo kg
-    /// non deve diventare una montagna.
-    private var domain: ClosedRange<Double> {
+/// Serie, dominio e variazioni di un grafico corporeo, calcolati **una volta** fuori
+/// dal `body` e tenuti in `@State` (aggiornati con `.task(id:)`).
+///
+/// Prima ogni ridisegno della tab Misure rifaceva `bodySeries`, il filtro sul periodo
+/// e il calcolo del dominio: lavoro inutile su ogni tocco, e un dominio che poteva
+/// cambiare senza che i dati fossero cambiati.
+struct BodyChartData: Equatable {
+
+    var points: [Stats.BodyPoint] = []
+    /// Ultimo valore della serie **completa**, non del solo periodo scelto.
+    var latest: Stats.BodyPoint?
+    var domain: ClosedRange<Double> = 0...1
+
+    /// Costruisce i dati del grafico a partire dalla serie completa.
+    ///
+    /// La scala verticale ha un po' d'aria sopra e sotto (una variazione di mezzo kg
+    /// non deve diventare una montagna) ed è **arrotondata**: così aggiungere una
+    /// rilevazione dentro la stessa fascia non sposta gli assi.
+    static func make(series: [Stats.BodyPoint], from start: Date) -> BodyChartData {
+        let points = series.filter { $0.date >= start }
         let values = points.map(\.value)
         let low = values.min() ?? 0
         let high = values.max() ?? 1
         let padding = max((high - low) * 0.3, 0.5)
-        return (low - padding)...(high + padding)
+        let step = 0.5
+        let lower = ((low - padding) / step).rounded(.down) * step
+        let upper = ((high + padding) / step).rounded(.up) * step
+        return BodyChartData(
+            points: points,
+            latest: series.last,
+            domain: lower...max(upper, lower + step)
+        )
     }
 }
 
