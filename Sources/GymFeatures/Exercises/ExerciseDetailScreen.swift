@@ -223,7 +223,10 @@ public struct ExerciseDetailScreen: View {
                 }
             }
 
-            let secondary = exercise.localizedSecondaryMuscles
+            // Le stesse zone che entrano nella ripartizione (``SecondaryMuscles``):
+            // tradotte, senza duplicati e al massimo tre, non le stringhe grezze
+            // del dataset.
+            let secondary = exercise.localizedSecondaryMuscleGroups
             if !secondary.isEmpty {
                 Text("Secondari: \(secondary.joined(separator: ", "))")
                     .captionStyle(color: Theme.textTertiary)

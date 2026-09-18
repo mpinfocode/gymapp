@@ -19,6 +19,9 @@ let package = Package(
         // Solo macOS: rende le schermate in PNG (docs/preview, fuori da git) per la revisione visiva senza Xcode.
         .executableTarget(name: "GymSnapshots", dependencies: ["GymCore", "GymUI", "GymFeatures"]),
         // Solo macOS: l'app in una finestra formato iPhone, interattiva, per provare navigazione e layout prima di una build TestFlight.
+        // Solo macOS: prova il motore "scheda con l'AI" con chiamate reali a OpenRouter.
+        // La chiave si legge SOLO dalla variabile d'ambiente OPENROUTER_API_KEY e non viene mai stampata.
+        .executableTarget(name: "GymGeneratorTest", dependencies: ["GymCore"]),
         .executableTarget(name: "GymPreview", dependencies: ["GymCore", "GymUI", "GymFeatures"]),
     ]
 )

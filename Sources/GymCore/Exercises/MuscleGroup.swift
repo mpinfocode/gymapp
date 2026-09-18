@@ -57,13 +57,24 @@ public enum MuscleGroup: String, Sendable, Hashable, Codable, CaseIterable, Iden
 
     /// Tutti i termini muscolari del dataset (target e secondari) ricondotti al gruppo.
     ///
+    /// La mappa copre **il 100%** dei valori distinti di `target` (19) e di
+    /// `secondary_muscles` (40) presenti in `exercises.json`: la copertura è un check
+    /// di `GymChecks` ("secondari · mappa"), perché un termine non mappato finirebbe
+    /// in ``other`` e sparirebbe silenziosamente dal calcolo.
+    ///
     /// Scelte non ovvie, prese con criterio da preparatore atletico:
     /// - `serratus anterior` → Petto (è un muscolo della gabbia toracica, e nel dataset
     ///   quei 5 esercizi stanno in categoria `chest`);
     /// - `traps`, `spine`, `levator scapulae` → Dorso (in palestra "schiena");
+    /// - `brachialis` → Bicipiti (è un flessore di gomito, non un muscolo dell'avambraccio);
+    /// - `hip flexors` → Addome: compare **solo** come secondario (mai come target) e
+    ///   sempre in esercizi di core o di gamba, dove lo si allena come parte del "core"
+    ///   (negli esercizi di addome diventa un duplicato del principale e sparisce);
     /// - `abductors` → Glutei (l'abduttore principale dell'anca è il medio gluteo);
-    /// - `adductors`, `hip flexors`, `groin`, `inner thighs` e il collo → Altro: non
-    ///   esiste una zona "da palestra" fra quelle previste che li rappresenti onestamente.
+    /// - `adductors`, `groin`, `inner thighs` e il collo → Altro: non esiste una zona
+    ///   "da palestra" fra quelle previste che li rappresenti onestamente, e preferiamo
+    ///   non attribuirli piuttosto che spalmarli su Glutei o Quadricipiti. Sono 6
+    ///   esercizi come target (macchina adduttori) e 2 occorrenze come secondari.
     public static let targetGroups: [String: MuscleGroup] = [
         // Petto
         "pectorals": .chest,
@@ -103,6 +114,7 @@ public enum MuscleGroup: String, Sendable, Hashable, Codable, CaseIterable, Iden
         "lower abs": .abs,
         "obliques": .abs,
         "core": .abs,
+        "hip flexors": .abs,
         // Gambe
         "quads": .quads,
         "quadriceps": .quads,
@@ -120,7 +132,6 @@ public enum MuscleGroup: String, Sendable, Hashable, Codable, CaseIterable, Iden
         // Senza una zona da palestra sensata
         "adductors": .other,
         "inner thighs": .other,
-        "hip flexors": .other,
         "groin": .other,
         "sternocleidomastoid": .other,
         "neck": .other,

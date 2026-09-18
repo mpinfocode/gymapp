@@ -65,7 +65,12 @@ func runDatasetChecks(_ h: Harness) async -> ExerciseRepository? {
     var datasetCategories: Set<String> = []
     var datasetEquipment: Set<String> = []
     var datasetMuscles: Set<String> = []
-    for exercise in repository.all {
+    // Si guarda il dataset **grezzo**: `ExerciseCorrections` toglie dai secondari
+    // alcuni termini sbagliati (tutte e 14 le occorrenze di `brachialis` stanno in
+    // wrist curl, dove il brachiale non c'entra niente), ma la mappa deve
+    // continuare a documentare quello che il JSON contiene davvero.
+    let rawExercises = (try? await ExerciseRepository.loadFromBundle(applyingCorrections: false))?.all ?? repository.all
+    for exercise in rawExercises {
         datasetCategories.insert(exercise.category)
         datasetCategories.insert(exercise.bodyPart)
         datasetEquipment.insert(exercise.equipment)

@@ -17,8 +17,10 @@ struct MusclesScene: View {
         case summary
         /// Riepilogo del solo primo giorno.
         case day
-        /// Scheda che allena solo la parte alta: compare la riga delle zone mancanti.
+        /// Scheda che allena solo la parte alta: compare la riga delle zone mai allenate.
         case unbalanced
+        /// Scheda di sole gambe: glutei e femorali risultano allenati solo di riflesso.
+        case indirect
         /// Versione compatta com'è in Home, fra intestazione e chip dei giorni.
         case compact
         /// Scheda senza esercizi.
@@ -53,7 +55,7 @@ struct MusclesScene: View {
     private func content(_ environment: AppEnvironment) -> some View {
         if let program = environment.store.activeProgram {
             switch variant {
-            case .summary, .unbalanced, .empty:
+            case .summary, .unbalanced, .indirect, .empty:
                 MuscleDistributionSection(programID: program.id)
             case .day:
                 if let day = program.days.first {
@@ -100,6 +102,8 @@ enum MusclesMockData {
             environment.store.addProgram(SampleProgram.make(startDate: start, now: start), makeActive: true)
         case .unbalanced:
             environment.store.addProgram(upperOnly(start: start, now: start), makeActive: true)
+        case .indirect:
+            environment.store.addProgram(lowerOnly(start: start, now: start), makeActive: true)
         case .empty:
             environment.store.addProgram(withoutExercises(start: start, now: start), makeActive: true)
         }
@@ -130,6 +134,27 @@ enum MusclesMockData {
                 ]),
             ],
             accent: 2,
+            createdAt: now,
+            updatedAt: now
+        )
+    }
+
+    /// Scheda di sole gambe senza un solo esercizio diretto di glutei o femorali:
+    /// è il caso che mostra la riga "Solo indirettamente".
+    private static func lowerOnly(start: Date, now: Date) -> Program {
+        Program(
+            name: "Solo gambe",
+            startDate: start,
+            plannedWeeks: 4,
+            days: [
+                ProgramDay(name: "Giorno A", items: [
+                    PlanItem(exerciseID: "0043", targetSets: 4, measure: .reps(min: 6, max: 8), warmupSets: 2),
+                    PlanItem(exerciseID: "0739", targetSets: 4, measure: .reps(min: 10, max: 12)),
+                    PlanItem(exerciseID: "0585", targetSets: 3, measure: .reps(min: 12, max: 15)),
+                    PlanItem(exerciseID: "0605", targetSets: 4, measure: .reps(min: 12, max: 15)),
+                ]),
+            ],
+            accent: 3,
             createdAt: now,
             updatedAt: now
         )

@@ -118,12 +118,13 @@ func makeScenes(full: AppEnvironment, empty: AppEnvironment) -> [SnapshotScene] 
                       view: ProgramVariantScene(variant: .archive)),
 
         // Muscoli colpiti: la ripartizione della scheda.
-        SnapshotScene("muscoli-riepilogo", height: 460, settle: 2.5, view: MusclesScene(variant: .summary)),
-        SnapshotScene("muscoli-giorno", height: 300, settle: 2.5, view: MusclesScene(variant: .day)),
-        SnapshotScene("muscoli-squilibrata", height: 340, settle: 2.5, view: MusclesScene(variant: .unbalanced)),
-        SnapshotScene("muscoli-compatto", height: 480, settle: 2.5, view: MusclesScene(variant: .compact)),
+        SnapshotScene("muscoli-riepilogo", height: 580, settle: 2.5, view: MusclesScene(variant: .summary)),
+        SnapshotScene("muscoli-giorno", height: 400, settle: 2.5, view: MusclesScene(variant: .day)),
+        SnapshotScene("muscoli-squilibrata", height: 400, settle: 2.5, view: MusclesScene(variant: .unbalanced)),
+        SnapshotScene("muscoli-indiretti", height: 330, settle: 2.5, view: MusclesScene(variant: .indirect)),
+        SnapshotScene("muscoli-compatto", height: 560, settle: 2.5, view: MusclesScene(variant: .compact)),
         SnapshotScene("muscoli-vuoto", height: 240, settle: 2.5, view: MusclesScene(variant: .empty)),
-        SnapshotScene("muscoli-scuro", height: 460, dark: true, settle: 2.5, view: MusclesScene(variant: .summary)),
+        SnapshotScene("muscoli-scuro", height: 580, dark: true, settle: 2.5, view: MusclesScene(variant: .summary)),
 
         // Misure.
         SnapshotScene("misure", view: screen(MeasuresScreen(), in: full)),

@@ -1,15 +1,22 @@
 import Foundation
 import GymCore
 
-/// Verifica di `Stats.muscleDistribution(...)`: pesi, ordinamento, arrotondamenti
-/// che devono sommare a 100, zone mancanti, esercizi personalizzati e sconosciuti.
+/// Verifica di `Stats.muscleDistribution(...)`: pesi di principale e secondari,
+/// ordinamento, arrotondamenti che devono sommare a 100, zone mai allenate e zone
+/// allenate solo di riflesso, esercizi personalizzati e sconosciuti.
+///
+/// **Cambio di regola (2026-09-18).** Fino a oggi questi check dichiaravano che "i
+/// muscoli secondari NON contano". Ora contano: 1,0 al principale, 0,5 a ogni
+/// secondario sinergista, 0,25 a ogni stabilizzatore. I check che codificavano la
+/// vecchia regola sono stati riscritti, non tolti: ognuno ha il suo corrispettivo
+/// qui sotto, e la vecchia regola resta verificabile passando `includesSecondary: false`.
 @MainActor
 func runMuscleDistributionChecks(_ h: Harness, repository: ExerciseRepository?) {
 
     // MARK: Esercizi finti, uno per gruppo, per controllare l'aritmetica senza dataset.
 
-    func fake(_ id: String, target: String, category: String = "") -> Exercise {
-        Exercise(id: id, name: id, category: category, target: target)
+    func fake(_ id: String, target: String, category: String = "", secondary: [String] = []) -> Exercise {
+        Exercise(id: id, name: id, category: category, target: target, secondaryMuscles: secondary)
     }
 
     let library: [String: Exercise] = [
@@ -22,6 +29,18 @@ func runMuscleDistributionChecks(_ h: Harness, repository: ExerciseRepository?) 
         "abs": fake("abs", target: "abs"),
         "custom-1": Exercise(id: "custom-1", name: "Face pull", category: "shoulders",
                              target: "rear deltoids", isCustom: true),
+        // Con secondari, per i pesi 1 / 0,5 / 0,25.
+        "panca": Exercise(id: "panca", name: "panca piana", target: "pectorals",
+                          secondaryMuscles: ["triceps", "shoulders"]),
+        "lento": Exercise(id: "lento", name: "lento avanti", target: "delts",
+                          secondaryMuscles: ["triceps", "upper back"]),
+        // `upper back` e `rhomboids` sono la stessa zona del target: contano una volta
+        // sola come duplicato del principale, cioè zero.
+        "rematore": Exercise(id: "rematore", name: "rematore", target: "lats",
+                             secondaryMuscles: ["biceps", "rhomboids", "upper back", "biceps"]),
+        // Sei secondari: due sinergisti, poi gli stabilizzatori. Ne entrano tre.
+        "affollato": Exercise(id: "affollato", name: "affollato", target: "quads",
+                              secondaryMuscles: ["glutes", "hamstrings", "core", "calves", "lower back"]),
     ]
 
     func item(_ exerciseID: String, sets: Int, warmup: Int = 0) -> PlanItem {
@@ -34,6 +53,11 @@ func runMuscleDistributionChecks(_ h: Harness, repository: ExerciseRepository?) 
 
     func distribution(_ items: [PlanItem]) -> Stats.MuscleDistribution {
         Stats.muscleDistribution(items: items) { library[$0] }
+    }
+
+    /// Distribuzione alla vecchia maniera: solo il muscolo principale.
+    func primaryOnly(_ items: [PlanItem]) -> Stats.MuscleDistribution {
+        Stats.muscleDistribution(items: items, includesSecondary: false) { library[$0] }
     }
 
     // MARK: Pesi e serie di riscaldamento
@@ -52,6 +76,69 @@ func runMuscleDistributionChecks(_ h: Harness, repository: ExerciseRepository?) 
 
     let zeroSets = distribution([item("chest", sets: 0, warmup: 3)])
     h.check("una voce a zero serie non entra", zeroSets.isEmpty && zeroSets.totalSets == 0)
+
+    h.check("i pesi pubblici sono 1 · 0,5 · 0,25",
+            Stats.directWeight == 1 && Stats.synergistWeight == 0.5 && Stats.stabilizerWeight == 0.25)
+    h.check("al massimo tre secondari per esercizio", SecondaryMuscles.maximumPerExercise == 3)
+
+    // MARK: Secondari: l'esempio numerico verificabile a mano
+    //
+    // Giorno con 4 serie di panca + 3 di lento avanti.
+    //   panca (Petto) → tricipiti e spalle sinergisti
+    //     Petto 4 × 1     = 4,0 diretto
+    //     Tricipiti 4 × 0,5 = 2,0 · Spalle 4 × 0,5 = 2,0
+    //   lento (Spalle) → tricipiti sinergisti, dorso alto stabilizzatore (postura)
+    //     Spalle 3 × 1    = 3,0 diretto
+    //     Tricipiti 3 × 0,5 = 1,5 · Dorso 3 × 0,25 = 0,75
+    // Totale pesato 4,0 + 5,0 + 3,5 + 0,75 = 13,25
+    // Percentuali (resto maggiore): Spalle 38 · Petto 30 · Tricipiti 26 · Dorso 6.
+
+    h.section("muscoli · secondari")
+
+    let pushDay = distribution([item("panca", sets: 4, warmup: 2), item("lento", sets: 3)])
+    h.check("Petto: 4,0 dirette e niente indiretto",
+            pushDay.directSets(of: .chest) == 4 && pushDay.indirectSets(of: .chest) == 0)
+    h.check("Spalle: 3,0 dirette + 2,0 indirette",
+            pushDay.directSets(of: .shoulders) == 3 && pushDay.indirectSets(of: .shoulders) == 2)
+    h.check("Tricipiti: 3,5 solo indirette",
+            pushDay.directSets(of: .triceps) == 0 && pushDay.indirectSets(of: .triceps) == 3.5)
+    h.check("Dorso: 0,75 indirette (stabilizzatore del lento)",
+            pushDay.indirectSets(of: .back) == 0.75)
+    h.checkClose("totale pesato 13,25", pushDay.totalWeightedSets, 13.25)
+    h.check("le serie vere restano 7", pushDay.totalSets == 7)
+    h.check("ordine per quota pesata", pushDay.shares.map(\.group) == [.shoulders, .chest, .triceps, .back])
+    h.check("percentuali 38 · 30 · 26 · 6", pushDay.shares.map(\.percent) == [38, 30, 26, 6])
+    h.check("le percentuali sommano a 100", pushDay.shares.reduce(0) { $0 + $1.percent } == 100)
+    h.check("Tricipiti e Dorso sono allenati solo indirettamente",
+            pushDay.indirectOnlyGroups == [.back, .triceps])
+    h.check("le zone di gamba non sono allenate affatto",
+            pushDay.neverTrainedGroups == [.biceps, .quads, .hamstrings, .glutes, .calves, .abs])
+    h.check("missingGroups resta un alias di neverTrainedGroups",
+            pushDay.missingGroups == pushDay.neverTrainedGroups)
+
+    // Lo stesso giorno con la regola vecchia: solo il principale.
+    let pushDayPrimaryOnly = primaryOnly([item("panca", sets: 4), item("lento", sets: 3)])
+    h.check("senza secondari restano solo Petto e Spalle",
+            pushDayPrimaryOnly.shares.map(\.group) == [.chest, .shoulders])
+    h.check("senza secondari il totale pesato è il numero di serie",
+            pushDayPrimaryOnly.totalWeightedSets == 7)
+    h.check("senza secondari i Tricipiti tornano fra i mai allenati",
+            pushDayPrimaryOnly.neverTrainedGroups.contains(.triceps)
+                && pushDayPrimaryOnly.indirectOnlyGroups.isEmpty)
+
+    // Uno stesso gruppo citato due volte fra i secondari conta una volta sola.
+    let repeated = distribution([item("rematore", sets: 4)])
+    h.check("secondari nello stesso gruppo contano una volta sola",
+            repeated.indirectSets(of: .biceps) == 2)
+    h.check("il duplicato del principale non conta", repeated.directSets(of: .back) == 4
+            && repeated.indirectSets(of: .back) == 0)
+
+    // Più di tre secondari: si tengono i tre più rilevanti (prima i sinergisti).
+    let crowded = distribution([item("affollato", sets: 2)])
+    h.check("al massimo tre secondari entrano nel conto", crowded.shares.count == 4)
+    h.check("i sinergisti hanno la precedenza sugli stabilizzatori",
+            crowded.indirectSets(of: .glutes) == 1 && crowded.indirectSets(of: .hamstrings) == 1
+                && crowded.indirectSets(of: .abs) == 0.5 && crowded.indirectSets(of: .calves) == 0)
 
     // MARK: Scheda vuota
 
@@ -169,12 +256,24 @@ func runMuscleDistributionChecks(_ h: Harness, repository: ExerciseRepository?) 
     let sample = SampleProgram.make(startDate: Fixtures.date(2026, 9, 1), now: Fixtures.date(2026, 9, 1))
     let whole = Stats.muscleDistribution(of: sample, exercisesByID: byID)
 
+    if ProcessInfo.processInfo.environment["GYMCHECKS_VERBOSE"] == "1" {
+        for (label, dist) in [("TUTTA", whole)] + sample.days.map({ ($0.name, Stats.muscleDistribution(of: $0, exercisesByID: byID)) }) {
+            print("   --- \(label): dirette \(dist.totalSets) pesate \(dist.totalWeightedSets)")
+            for sh in dist.shares { print("      \(sh.group.displayName) \(sh.percent)% dir \(sh.directSets) ind \(sh.indirectSets)") }
+            print("      mai: \(dist.neverTrainedGroups.map(\.displayName)) · indiretti: \(dist.indirectOnlyGroups.map(\.displayName))")
+        }
+        for id in SampleProgram.exerciseIDs {
+            if let e = byID[id] {
+                print("   \(id) \(e.name) [\(e.muscleGroupKind.displayName)] -> \(e.secondaryMuscleRoles.map { "\($0.group.displayName):\($0.role.rawValue)" })")
+            }
+        }
+    }
     h.check("tutti gli esercizi d'esempio sono risolvibili", whole.unresolvedItems == 0)
     h.check("totale = somma delle serie di lavoro dei tre giorni", whole.totalSets == sample.totalSets)
     h.check("le percentuali della scheda d'esempio sommano a 100",
             whole.shares.reduce(0) { $0 + $1.percent } == 100)
-    h.check("la scheda d'esempio è ordinata per quota decrescente",
-            whole.shares.map(\.sets) == whole.shares.map(\.sets).sorted(by: >))
+    h.check("la scheda d'esempio è ordinata per quota pesata decrescente",
+            whole.shares.map(\.weightedSets) == whole.shares.map(\.weightedSets).sorted(by: >))
     h.check("il dorso è la zona più allenata", whole.shares.first?.group == .back)
     h.check("petto, spalle, braccia, quadricipiti e femorali sono tutti presenti",
             whole.sets(of: .chest) > 0 && whole.sets(of: .shoulders) > 0
@@ -184,22 +283,56 @@ func runMuscleDistributionChecks(_ h: Harness, repository: ExerciseRepository?) 
             whole.sets(of: .quads) >= 7)
     h.check("polpacci e addome della scheda d'esempio sono allenati",
             whole.sets(of: .calves) == 4 && whole.sets(of: .abs) == 3)
+    h.check("la scheda d'esempio non lascia fuori nessuna zona",
+            whole.neverTrainedGroups.isEmpty && whole.indirectOnlyGroups.isEmpty)
+    h.check("i glutei della scheda d'esempio lavorano più di riflesso che direttamente",
+            whole.directSets(of: .glutes) == 3 && whole.indirectSets(of: .glutes) == 3.5)
+    h.check("gli avambracci compaiono solo come secondari",
+            whole.directSets(of: .forearms) == 0 && whole.indirectSets(of: .forearms) > 0)
+    h.check("il totale pesato supera le serie vere", whole.totalWeightedSets > Double(whole.totalSets))
 
-    // Giorno singolo: Push.
+    // Giorno singolo: Push. 4+3 serie di petto, 3+3 di spalle, 3+3 di tricipiti.
     if let push = sample.days.first {
         let pushDistribution = Stats.muscleDistribution(of: push, exercisesByID: byID)
         h.check("giorno Push: totale coerente col giorno", pushDistribution.totalSets == push.totalSets)
         h.check("giorno Push: le percentuali sommano a 100",
                 pushDistribution.shares.reduce(0) { $0 + $1.percent } == 100)
-        h.check("giorno Push: solo petto, spalle e tricipiti",
-                Set(pushDistribution.shares.map(\.group)) == Set([.chest, .shoulders, .triceps]))
-        h.check("giorno Push: dorso e gambe fra le zone mancanti",
-                pushDistribution.missingGroups.contains(.back)
-                    && pushDistribution.missingGroups.contains(.quads))
+        h.check("giorno Push: petto, spalle e tricipiti sono le zone dirette",
+                Set(pushDistribution.shares.filter { $0.directSets > 0 }.map(\.group))
+                    == Set([.chest, .shoulders, .triceps]))
+        h.check("giorno Push: i tricipiti guadagnano 5,0 serie indirette da panca, inclinata e lento",
+                pushDistribution.directSets(of: .triceps) == 6
+                    && pushDistribution.indirectSets(of: .triceps) == 5)
+        h.check("giorno Push: il dorso entra solo come stabilizzatore",
+                pushDistribution.indirectOnlyGroups == [.back])
+        h.check("giorno Push: le gambe restano fra le zone mai allenate",
+                pushDistribution.neverTrainedGroups.contains(.quads)
+                    && pushDistribution.neverTrainedGroups.contains(.glutes))
         h.check("giorno Push: prime tre quote disponibili per la Home",
                 pushDistribution.topShares(3).count == 3)
+
+        // La vecchia regola, per confronto: senza secondari il dorso spariva del tutto.
+        let pushPrimaryOnly = Stats.muscleDistribution(of: push, exercisesByID: byID, includesSecondary: false)
+        h.check("giorno Push senza secondari: solo petto, spalle e tricipiti",
+                Set(pushPrimaryOnly.shares.map(\.group)) == Set([.chest, .shoulders, .triceps]))
+        h.check("giorno Push senza secondari: il dorso risulta mai allenato",
+                pushPrimaryOnly.neverTrainedGroups.contains(.back))
     } else {
         h.fail("la scheda d'esempio non ha giorni")
+    }
+
+    // Giorno Pull: nessun esercizio di tricipiti, ma i bicipiti lavorano anche
+    // fuori dai curl (trazioni e rematori).
+    if sample.days.count >= 2 {
+        let pull = Stats.muscleDistribution(of: sample.days[1], exercisesByID: byID)
+        h.check("giorno Pull: i bicipiti hanno 6,0 dirette e 5,5 indirette",
+                pull.directSets(of: .biceps) == 6 && pull.indirectSets(of: .biceps) == 5.5)
+        h.check("giorno Pull: quadricipiti e femorali entrano solo dallo stacco",
+                pull.indirectOnlyGroups == [.quads, .hamstrings])
+        h.check("giorno Pull: i tricipiti non sono toccati nemmeno di riflesso",
+                pull.neverTrainedGroups.contains(.triceps))
+        h.check("giorno Pull: la presa lavora in ogni tirata",
+                pull.indirectSets(of: .forearms) > 0)
     }
 
     // Giorno Legs: nessuna zona della parte alta a parte l'addome.
@@ -207,7 +340,11 @@ func runMuscleDistributionChecks(_ h: Harness, repository: ExerciseRepository?) 
         let legs = Stats.muscleDistribution(of: sample.days[2], exercisesByID: byID)
         h.check("giorno Legs: la macro area più grande sono le gambe",
                 legs.macroAreas.first?.area == .legs)
-        h.check("giorno Legs: petto e dorso fra le zone mancanti",
-                legs.missingGroups.contains(.chest) && legs.missingGroups.contains(.back))
+        h.check("giorno Legs: petto, bicipiti e tricipiti mai allenati",
+                legs.neverTrainedGroups == [.chest, .biceps, .triceps])
+        h.check("giorno Legs: il dorso resta solo come stabilizzatore dello stacco rumeno",
+                legs.indirectOnlyGroups.contains(.back) && legs.directSets(of: .back) == 0)
+        h.check("giorno Legs: i glutei sono allenati solo di riflesso",
+                legs.directSets(of: .glutes) == 0 && legs.indirectSets(of: .glutes) == 3.5)
     }
 }
