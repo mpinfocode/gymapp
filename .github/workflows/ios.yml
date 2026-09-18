@@ -88,10 +88,11 @@ jobs:
         run: |
           set -euo pipefail
           IMPOSTAZIONI="$(xcodebuild -showBuildSettings -project GymApp.xcodeproj -scheme Gym -configuration Release 2>/dev/null)"
-          printf '%s\n' "$IMPOSTAZIONI" | grep -E ' (SWIFT_OPTIMIZATION_LEVEL|SWIFT_COMPILATION_MODE|ENABLE_TESTABILITY) = ' || true
-          printf '%s\n' "$IMPOSTAZIONI" | grep -q ' SWIFT_OPTIMIZATION_LEVEL = -O$' || { echo "::error::Release senza -O"; exit 1; }
-          printf '%s\n' "$IMPOSTAZIONI" | grep -q ' SWIFT_COMPILATION_MODE = wholemodule$' || { echo "::error::Release senza whole module"; exit 1; }
-          printf '%s\n' "$IMPOSTAZIONI" | grep -q ' ENABLE_TESTABILITY = NO$' || { echo "::error::ENABLE_TESTABILITY attivo in Release"; exit 1; }
+          # Niente pipe verso grep -q: chiude la pipe al primo riscontro e, con pipefail, printf fallisce (Broken pipe).
+          grep -E ' (SWIFT_OPTIMIZATION_LEVEL|SWIFT_COMPILATION_MODE|ENABLE_TESTABILITY) = ' <<<"$IMPOSTAZIONI" || true
+          grep -q ' SWIFT_OPTIMIZATION_LEVEL = -O$' <<<"$IMPOSTAZIONI" || { echo "::error::Release senza -O"; exit 1; }
+          grep -q ' SWIFT_COMPILATION_MODE = wholemodule$' <<<"$IMPOSTAZIONI" || { echo "::error::Release senza whole module"; exit 1; }
+          grep -q ' ENABLE_TESTABILITY = NO$' <<<"$IMPOSTAZIONI" || { echo "::error::ENABLE_TESTABILITY attivo in Release"; exit 1; }
 
       # Nessuna cache SPM/DerivedData: il progetto non ha dipendenze SPM esterne
       # (SPEC §1.5), quindi non c'è nulla da scaricare, e una cache di
