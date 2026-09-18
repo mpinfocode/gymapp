@@ -307,7 +307,10 @@ func runDatasetChecks(_ h: Harness) async -> ExerciseRepository? {
         }
     }
     let elapsed = Date().timeIntervalSince(started)
-    h.check("300 ricerche su 1.324 esercizi in meno di 3s (\(String(format: "%.2f", elapsed))s)", elapsed < 3.0)
+    // Soglia larga di proposito: i check girano in debug anche sui runner condivisi della CI,
+    // molto più lenti di un Mac locale. Serve solo a intercettare regressioni di ordini di grandezza
+    // (in Release una ricerca costa meno di 1 ms); le misure fini stanno nel benchmark informativo.
+    h.check("300 ricerche su 1.324 esercizi in meno di 20s (\(String(format: "%.2f", elapsed))s)", elapsed < 20.0)
     h.check("le ricerche hanno prodotto risultati", produced > 0)
 
     return repository
