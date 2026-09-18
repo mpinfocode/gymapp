@@ -1,0 +1,175 @@
+name: iOS
+
+# Unica build iOS reale del progetto: in locale non c'è Xcode (docs/SPEC.md §1).
+# Produce un .ipa NON firmato da installare sull'iPhone con Sideloadly/AltStore
+# (istruzioni passo-passo nel README).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Un push che ne supera un altro annulla il run precedente: niente minuti macOS
+# bruciati su commit già superati.
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Homebrew sul runner è già aggiornato: saltare update/cleanup vale ~1 minuto.
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+  HOMEBREW_NO_ANALYTICS: "1"
+  # Output di xcodebuild non bufferizzato: xcbeautify lo formatta in streaming.
+  NSUnbufferedIO: "YES"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job leggero: compila il package e lancia i check. È lo stesso comando che si
+  # usa in locale, quindi fallisce presto e con messaggi familiari.
+  # ---------------------------------------------------------------------------
+  checks:
+    name: Checks (SwiftPM)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Seleziona Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          # `latest-stable` = la più recente Xcode STABILE presente sull'immagine
+          # del runner (esclude le preview). Evita di dipendere dal default
+          # dell'immagine, che GitHub cambia senza preavviso.
+          xcode-version: latest-stable
+
+      - name: Versioni toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: swift build
+        run: swift build
+
+      - name: swift run GymChecks
+        run: swift run GymChecks
+
+  # ---------------------------------------------------------------------------
+  # Job pesante: genera il progetto Xcode, compila per simulatore (smoke test),
+  # archivia per device senza firma e impacchetta l'IPA.
+  # `needs: checks` evita di spendere minuti macOS se il package non compila.
+  # ---------------------------------------------------------------------------
+  ipa:
+    name: IPA non firmata
+    needs: checks
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Seleziona Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Installa XcodeGen
+        run: brew install xcodegen
+
+      - name: Genera GymApp.xcodeproj
+        run: xcodegen generate --spec project.yml
+
+      # Nessuna cache SPM/DerivedData: il progetto non ha dipendenze SPM esterne
+      # (SPEC §1.5), quindi non c'è nulla da scaricare, e una cache di
+      # DerivedData peserebbe più di quanto farebbe risparmiare.
+      - name: Risolvi il package locale
+        run: |
+          set -euo pipefail
+          xcodebuild -resolvePackageDependencies \
+            -project GymApp.xcodeproj \
+            -scheme Gym \
+            -derivedDataPath .derived
+          xcodebuild -list -project GymApp.xcodeproj
+
+      - name: Build per simulatore (smoke test)
+        run: |
+          set -euo pipefail
+          xcb() {
+            if command -v xcbeautify >/dev/null 2>&1; then
+              xcodebuild "$@" | xcbeautify --renderer github-actions
+            else
+              xcodebuild "$@"
+            fi
+          }
+          xcb build \
+            -project GymApp.xcodeproj \
+            -scheme Gym \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath .derived \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Archive per device (senza firma)
+        run: |
+          set -euo pipefail
+          xcb() {
+            if command -v xcbeautify >/dev/null 2>&1; then
+              xcodebuild "$@" | xcbeautify --renderer github-actions
+            else
+              xcodebuild "$@"
+            fi
+          }
+          xcb archive \
+            -project GymApp.xcodeproj \
+            -scheme Gym \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Gym.xcarchive \
+            -derivedDataPath .derived \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: Impacchetta Gym-unsigned.ipa
+        run: |
+          set -euo pipefail
+          APP="build/Gym.xcarchive/Products/Applications/Gym.app"
+          test -d "$APP" || { echo "::error::Gym.app non trovata nell'archivio"; exit 1; }
+
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          # -R preserva i symlink interni al bundle.
+          cp -R "$APP" build/Payload/Gym.app
+
+          ( cd build && zip -qry Gym-unsigned.ipa Payload )
+          rm -rf build/Payload
+
+          plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$APP/Info.plist" 2>/dev/null || echo "n/d"; }
+          {
+            echo "### IPA generata"
+            echo ""
+            echo "| campo | valore |"
+            echo "| --- | --- |"
+            echo "| bundle id | \`$(plist CFBundleIdentifier)\` |"
+            echo "| versione | $(plist CFBundleShortVersionString) (build $(plist CFBundleVersion)) |"
+            echo "| iOS minimo | $(plist MinimumOSVersion) |"
+            echo "| dimensione | $(du -h build/Gym-unsigned.ipa | cut -f1) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Pubblica l'artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Gym-unsigned.ipa
+          path: build/Gym-unsigned.ipa
+          # Carica il file così com'è: si scarica un .ipa pronto da dare a
+          # Sideloadly, senza doverlo prima estrarre da uno zip.
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
