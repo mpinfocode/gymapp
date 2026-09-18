@@ -333,7 +333,10 @@ jobs:
           # (app-store → app-store-connect). Il file committato usa il nome
           # nuovo; se il runner avesse un Xcode più vecchio si ripiega su quello
           # storico invece di fallire con "unsupported method".
-          VERSIONE_XCODE="$(xcodebuild -version | head -n 1 | awk '{print $2}')"
+          # Niente `xcodebuild … | head`: head chiude la pipe dopo una riga e xcodebuild
+          # va in crash con "Broken pipe" (exit 134). Si legge tutto l'output, poi lo si filtra.
+          INFO_XCODE="$(xcodebuild -version)"
+          VERSIONE_XCODE="$(printf '%s\n' "$INFO_XCODE" | awk 'NR==1 {print $2}')"
           PIU_BASSA="$(printf '15.3\n%s\n' "$VERSIONE_XCODE" | sort -V | head -n 1)"
           if [ "$PIU_BASSA" = "15.3" ]; then
             METODO="app-store-connect"

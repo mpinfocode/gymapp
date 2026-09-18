@@ -44,6 +44,12 @@ func render(_ scene: SnapshotScene, into directory: String) async {
     // La finestra deve esistere davvero: senza di essa SwiftUI non considera la
     // view "comparsa" e non esegue `.task` / `.onAppear`, quindi le schermate che
     // caricano dati in modo asincrono uscirebbero vuote.
+    // ...ma non deve disturbare chi sta usando il Mac: trasparente, fuori schermo, senza ombra né eventi.
+    // L'alpha della finestra agisce solo in composizione: `cacheDisplay` continua a rendere la view piena.
+    window.alphaValue = 0
+    window.hasShadow = false
+    window.ignoresMouseEvents = true
+    window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
     window.orderFrontRegardless()
     host.layoutSubtreeIfNeeded()
     // Primo disegno "a vuoto": è quello che fa comparire davvero la view e quindi
