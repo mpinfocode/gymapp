@@ -62,7 +62,7 @@ public struct PlanItemEditorSheet: View {
     private var header: some View {
         HStack(alignment: .top, spacing: Theme.Spacing.m) {
             VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                Text(app.store.exerciseDisplayName(id: item?.exerciseID ?? ""))
+                Text(exerciseTitle)
                     .font(.sectionTitle)
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(2)
@@ -83,6 +83,13 @@ public struct PlanItemEditorSheet: View {
                 .frame(minHeight: Theme.Size.minTapTarget)
                 .accessibilityLabel(Text("Fine, chiudi l'editor"))
         }
+    }
+
+    /// Titolo senza il prefisso dell'attrezzo, come nelle righe della scheda;
+    /// se l'esercizio non si risolve più resta il nome salvato nello storico.
+    private var exerciseTitle: String {
+        let id = item?.exerciseID ?? ""
+        return app.store.exercise(id: id)?.shortDisplayName ?? app.store.exerciseDisplayName(id: id)
     }
 
     private var position: String {

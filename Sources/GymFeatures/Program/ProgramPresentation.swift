@@ -24,12 +24,12 @@ enum ProgramPresentation {
         count == 1 ? "1 giorno" : "\(count) giorni"
     }
 
-    /// Sottoriga del giorno nella pagina della scheda.
-    /// In modalità a giorni fissi antepone il giorno della settimana.
-    static func daySubtitle(_ day: ProgramDay, mode: ProgramMode) -> String {
-        let count = exerciseCount(day.items.count)
-        guard mode == .weekdays, let weekday = day.weekday else { return count }
-        return "\(weekday.italianName) · \(count)"
+    /// Sottoriga del giorno nella pagina della scheda: solo il conteggio.
+    ///
+    /// I giorni sono un semplice elenco con un nome: la modalità rotazione / giorni
+    /// fissi è sparita dalla UI (SPEC §0).
+    static func daySubtitle(_ day: ProgramDay) -> String {
+        exerciseCount(day.items.count)
     }
 
     // MARK: - Voci di piano

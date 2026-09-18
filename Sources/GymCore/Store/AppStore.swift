@@ -20,7 +20,58 @@ public final class AppStore {
     public private(set) var sessions: [WorkoutSession] = []
     /// Rilevazioni corporee, dalla più recente alla più vecchia.
     public private(set) var bodyEntries: [BodyEntry] = []
-    public private(set) var settings = UserSettings()
+
+    // MARK: Impostazioni, campo per campo
+    //
+    // Le preferenze **non** sono una sola proprietà osservabile: ognuna è tracciata
+    // per conto suo. Aprire un esercizio (che scrive i recenti) non deve invalidare
+    // chi legge i preferiti o le vibrazioni, altrimenti si ridisegna tutta l'app nel
+    // bel mezzo della transizione di push. ``UserSettings`` resta il DTO con cui si
+    // serializza su disco: il formato del file non cambia.
+
+    /// Nome mostrato in Impostazioni e nel saluto della Home.
+    public private(set) var displayName: String = UserSettings().displayName
+    /// Scheda attualmente attiva; `nil` finché non ne esiste una.
+    public private(set) var activeProgramID: UUID?
+    public private(set) var unit: WeightUnit = UserSettings().unit
+    /// Recupero di default in secondi, usato quando la scheda non ne specifica uno.
+    public private(set) var defaultRestSeconds: Int = UserSettings().defaultRestSeconds
+    public private(set) var favoriteExerciseIDs: Set<String> = []
+    /// Esercizi aperti di recente, dal più recente al meno recente.
+    public private(set) var recentExerciseIDs: [String] = []
+    public private(set) var hapticsEnabled: Bool = UserSettings().hapticsEnabled
+
+    /// Tutte le preferenze in un colpo solo (compatibilità + serializzazione).
+    ///
+    /// - Important: **leggerla crea una dipendenza larga**: un osservatore che tocca
+    ///   `store.settings` viene invalidato da *qualunque* preferenza cambi, recenti
+    ///   compresi. Nella UI si legge sempre la singola proprietà granulare
+    ///   (``favoriteExerciseIDs``, ``hapticsEnabled``, ``unit``…). Questa resta per
+    ///   il backup, per la persistenza e per il codice che non è ancora migrato.
+    public var settings: UserSettings {
+        UserSettings(
+            displayName: displayName,
+            activeProgramID: activeProgramID,
+            unit: unit,
+            defaultRestSeconds: defaultRestSeconds,
+            favoriteExerciseIDs: favoriteExerciseIDs,
+            recentExerciseIDs: recentExerciseIDs,
+            hapticsEnabled: hapticsEnabled
+        )
+    }
+
+    /// Applica un DTO alle proprietà granulari toccando **solo** quelle cambiate,
+    /// così un import o un caricamento non invalida osservatori senza motivo.
+    private func applySettings(_ new: UserSettings) {
+        if displayName != new.displayName { displayName = new.displayName }
+        if activeProgramID != new.activeProgramID { activeProgramID = new.activeProgramID }
+        if unit != new.unit { unit = new.unit }
+        if defaultRestSeconds != new.defaultRestSeconds { defaultRestSeconds = new.defaultRestSeconds }
+        if favoriteExerciseIDs != new.favoriteExerciseIDs { favoriteExerciseIDs = new.favoriteExerciseIDs }
+        if recentExerciseIDs != new.recentExerciseIDs { recentExerciseIDs = new.recentExerciseIDs }
+        if hapticsEnabled != new.hapticsEnabled { hapticsEnabled = new.hapticsEnabled }
+    }
+
     /// Sessione in corso, `nil` se non se ne sta svolgendo nessuna.
     public private(set) var activeSession: WorkoutSession?
     /// Libreria esercizi; disponibile dopo ``load()``.
@@ -54,7 +105,21 @@ public final class AppStore {
     @ObservationIgnored public let calendar: Calendar
     @ObservationIgnored private let saveDelay: Duration
 
-    /// Libreria + personalizzati, ricostruita solo quando i personalizzati cambiano.
+    /// Contatore osservato dei personalizzati.
+    ///
+    /// Gli indici e i dizionari derivati qui sotto sono `@ObservationIgnored` (sono
+    /// cache, non stato), ma chi li legge deve comunque essere invalidato quando i
+    /// personalizzati cambiano: leggere questo contatore registra quella dipendenza
+    /// in O(1), senza toccare l'array.
+    private var customExercisesRevision = 0
+
+    /// Dizionario id → personalizzato (anche eliminati): evita la scansione lineare
+    /// di ``exercise(id:)``, chiamata per ogni riga di ogni lista.
+    @ObservationIgnored private var customByID: [String: Exercise] = [:]
+    /// Piccolo indice dei soli personalizzati utilizzabili; `nil` se non ce ne sono.
+    @ObservationIgnored private var customRepositoryCache: ExerciseRepository?
+    /// Fusione completa dataset + personalizzati, costruita **solo** se qualcuno usa
+    /// la vecchia ``searchableLibrary``.
     @ObservationIgnored private var mergedLibraryCache: ExerciseRepository?
 
     @ObservationIgnored private var dirtyFiles: Set<StoreFile> = []
@@ -103,11 +168,12 @@ public final class AppStore {
             .sorted { $0.startedAt > $1.startedAt }
         bodyEntries = await loadCollection([BodyEntry].self, from: .bodyEntries, fallback: [])
             .sorted { $0.date > $1.date }
-        settings = await loadCollection(UserSettings.self, from: .settings, fallback: UserSettings())
+        applySettings(await loadCollection(UserSettings.self, from: .settings, fallback: UserSettings()))
         activeSession = await loadOptional(WorkoutSession.self, from: .activeSession)
         customExercises = Self.sortedCustomExercises(
             await loadCollection([Exercise].self, from: .customExercises, fallback: [])
         )
+        invalidateCustomCaches()
 
         if exercises == nil {
             do {
@@ -193,25 +259,56 @@ public final class AppStore {
     /// Esercizi personalizzati utilizzabili (esclusi quelli eliminati).
     public var availableCustomExercises: [Exercise] { customExercises.filter(\.isSelectable) }
 
-    /// Libreria + personalizzati utilizzabili, indicizzati insieme.
+    /// Indice consultabile: dataset immutabile + piccolo indice dei personalizzati.
     ///
-    /// È **il** punto da cui passano ricerca, filtri e facet della UI: gli esercizi
-    /// dell'utente si comportano in tutto e per tutto come quelli del dataset.
-    /// L'indice si ricostruisce solo quando i personalizzati cambiano (operazione
-    /// rara), quindi digitare resta istantaneo.
+    /// È **il** punto da cui passano ricerca, filtri e facet: gli esercizi
+    /// dell'utente si comportano in tutto e per tutto come quelli del dataset, ma
+    /// crearne uno costa l'indicizzazione di *un* record, non di 1.325.
+    /// `Sendable`: si può usare dentro un `Task` fuori dal main actor.
+    public var exerciseIndex: ExerciseLibraryIndex? {
+        _ = customExercisesRevision
+        guard let exercises else { return nil }
+        return ExerciseLibraryIndex(library: exercises, custom: customRepository())
+    }
+
+    /// Fotografia `Sendable` di indice + preferiti da usare in background
+    /// (debounce della ricerca, calcolo dei facet). Vedi ``ExerciseSearchSnapshot``.
+    public func exerciseSearchSnapshot() -> ExerciseSearchSnapshot? {
+        guard let index = exerciseIndex else { return nil }
+        return ExerciseSearchSnapshot(index: index, favorites: favoriteExerciseIDs)
+    }
+
+    /// Libreria + personalizzati utilizzabili fusi in **un unico** `ExerciseRepository`.
+    ///
+    /// - Important: proprietà di **compatibilità**. La fusione copia 1.325 voci di
+    ///   indice: è molto più leggera di prima (non rinormalizza niente) ma resta
+    ///   O(n) sul main actor. Le feature devono passare a ``exerciseIndex`` o a
+    ///   ``exerciseSearchSnapshot()``, che non copiano nulla.
     public var searchableLibrary: ExerciseRepository? {
+        _ = customExercisesRevision
         if let mergedLibraryCache { return mergedLibraryCache }
         guard let exercises else { return nil }
-        let custom = availableCustomExercises
-        let merged = custom.isEmpty ? exercises : ExerciseRepository(exercises: exercises.all + custom)
+        guard let custom = customRepository() else { return exercises }
+        let merged = ExerciseRepository(merging: exercises, with: custom)
         mergedLibraryCache = merged
         return merged
+    }
+
+    /// Indice dei soli personalizzati utilizzabili, costruito a richiesta.
+    private func customRepository() -> ExerciseRepository? {
+        if let customRepositoryCache { return customRepositoryCache }
+        let usable = customExercises.filter(\.isSelectable)
+        guard !usable.isEmpty else { return nil }
+        let repository = ExerciseRepository(exercises: usable)
+        customRepositoryCache = repository
+        return repository
     }
 
     /// Esercizio per id, ovunque si trovi: libreria, personalizzati **o** personalizzati
     /// eliminati (questi ultimi servono a non rompere schede e storico).
     public func exercise(id: String) -> Exercise? {
-        if let custom = customExercises.first(where: { $0.id == id }) { return custom }
+        _ = customExercisesRevision
+        if let custom = customByID[id] { return custom }
         return exercises?.exercise(id: id)
     }
 
@@ -223,22 +320,38 @@ public final class AppStore {
         exercise(id: id)?.displayName ?? fallback
     }
 
+    /// Titolo e sottoriga **già pronti** per una riga di lista (vedi ``ExercisePresentation``).
+    ///
+    /// Per gli esercizi indicizzati la stringa è quella calcolata una volta sola
+    /// all'indicizzazione; per un personalizzato eliminato (citato solo dallo storico)
+    /// viene costruita al volo.
+    public func exercisePresentation(id: String) -> ExercisePresentation? {
+        if let presentation = exerciseIndex?.presentation(for: id) { return presentation }
+        guard let exercise = exercise(id: id) else { return nil }
+        return ExercisePresentation(exercise: exercise)
+    }
+
     /// Dizionario id → esercizio con libreria **e** personalizzati (anche eliminati):
     /// è quello che serve alle statistiche per risolvere tutto lo storico.
     public func allExercisesByID() -> [String: Exercise] {
+        _ = customExercisesRevision
+        guard !customByID.isEmpty else { return exercises?.exercisesByID() ?? [:] }
         var result = exercises?.exercisesByID() ?? [:]
-        for exercise in customExercises { result[exercise.id] = exercise }
+        for (id, exercise) in customByID { result[id] = exercise }
         return result
     }
 
     /// Ricerca su libreria + personalizzati.
+    ///
+    /// Legge **solo** i preferiti fra le preferenze: aprire un esercizio (che scrive
+    /// i recenti) non invalida chi sta guardando i risultati.
     public func searchExercises(_ filter: ExerciseFilter = .empty, limit: Int? = nil) -> [Exercise] {
-        searchableLibrary?.search(filter, favorites: settings.favoriteExerciseIDs, limit: limit) ?? []
+        exerciseIndex?.search(filter, favorites: favoriteExerciseIDs, limit: limit) ?? []
     }
 
     /// Facet (categoria, attrezzo, target, zona colpita, preferiti) su libreria + personalizzati.
     public func exerciseFacets(for filter: ExerciseFilter = .empty) -> ExerciseFacets {
-        searchableLibrary?.facets(for: filter, favorites: settings.favoriteExerciseIDs)
+        exerciseIndex?.facets(for: filter, favorites: favoriteExerciseIDs)
             ?? ExerciseFacets(categories: [], equipment: [], targets: [], favorites: 0, total: 0)
     }
 
@@ -346,9 +459,9 @@ public final class AppStore {
         guard let index = customExercises.firstIndex(where: { $0.id == id }) else { return .notFound }
 
         var settingsChanged = false
-        if settings.favoriteExerciseIDs.remove(id) != nil { settingsChanged = true }
-        if settings.recentExerciseIDs.contains(id) {
-            settings.recentExerciseIDs.removeAll { $0 == id }
+        if favoriteExerciseIDs.remove(id) != nil { settingsChanged = true }
+        if recentExerciseIDs.contains(id) {
+            recentExerciseIDs.removeAll { $0 == id }
             settingsChanged = true
         }
         if settingsChanged { markDirty(.settings) }
@@ -374,26 +487,38 @@ public final class AppStore {
 
     private func customExercisesDidChange() {
         customExercises = Self.sortedCustomExercises(customExercises)
-        mergedLibraryCache = nil
+        invalidateCustomCaches()
         markDirty(.customExercises)
     }
 
+    /// Ricostruisce le cache derivate dai personalizzati e notifica gli osservatori.
+    private func invalidateCustomCaches() {
+        customByID = Dictionary(customExercises.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        customRepositoryCache = nil
+        mergedLibraryCache = nil
+        customExercisesRevision &+= 1
+    }
+
+    /// Ordinamento per nome normalizzato, con la chiave calcolata una volta per
+    /// elemento invece che a ogni confronto.
     private static func sortedCustomExercises(_ exercises: [Exercise]) -> [Exercise] {
-        exercises.sorted { SearchText.normalize($0.name) < SearchText.normalize($1.name) }
+        var decorated = exercises.map { (key: SearchText.normalize($0.name), exercise: $0) }
+        decorated.sort { $0.key < $1.key }
+        return decorated.map(\.exercise)
     }
 
     // MARK: - Schede
 
     /// La scheda attiva, se c'è.
     public var activeProgram: Program? {
-        guard let id = settings.activeProgramID else { return nil }
+        guard let id = activeProgramID else { return nil }
         return programs.first { $0.id == id && !$0.isArchived }
     }
 
     /// Schede in archivio, dalla più recente.
     public var archivedPrograms: [Program] {
         programs
-            .filter { $0.isArchived || $0.id != settings.activeProgramID }
+            .filter { $0.isArchived || $0.id != activeProgramID }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
@@ -452,14 +577,14 @@ public final class AppStore {
     /// Rende attiva una scheda, archiviando la precedente.
     public func activate(programID: UUID) {
         guard let index = programs.firstIndex(where: { $0.id == programID }) else { return }
-        if let previous = settings.activeProgramID, previous != programID,
+        if let previous = activeProgramID, previous != programID,
            let previousIndex = programs.firstIndex(where: { $0.id == previous }) {
             programs[previousIndex].isArchived = true
             programs[previousIndex].updatedAt = now()
         }
         programs[index].isArchived = false
         programs[index].updatedAt = now()
-        settings.activeProgramID = programID
+        activeProgramID = programID
         markDirty(.programs, .settings)
     }
 
@@ -468,7 +593,7 @@ public final class AppStore {
         guard let index = programs.firstIndex(where: { $0.id == id }) else { return }
         programs[index].isArchived = true
         programs[index].updatedAt = now()
-        if settings.activeProgramID == id { settings.activeProgramID = nil }
+        if activeProgramID == id { activeProgramID = nil }
         markDirty(.programs, .settings)
     }
 
@@ -476,7 +601,7 @@ public final class AppStore {
     /// le sessioni restano, semplicemente non puntano più a una scheda esistente.
     public func deleteProgram(id: UUID) {
         programs.removeAll { $0.id == id }
-        if settings.activeProgramID == id { settings.activeProgramID = nil }
+        if activeProgramID == id { activeProgramID = nil }
         markDirty(.programs, .settings)
     }
 
@@ -556,7 +681,7 @@ public final class AppStore {
             exerciseID: exerciseID,
             targetSets: targetSets,
             measure: measure,
-            restSeconds: settings.defaultRestSeconds
+            restSeconds: defaultRestSeconds
         )
         editDay(id: dayID, inProgram: programID) { $0.items.append(item) }
         return item
@@ -564,7 +689,7 @@ public final class AppStore {
 
     /// Aggiunge più esercizi in un colpo solo (picker con selezione multipla).
     public func addItems(exerciseIDs: [String], toDay dayID: UUID, inProgram programID: UUID) {
-        let rest = settings.defaultRestSeconds
+        let rest = defaultRestSeconds
         editDay(id: dayID, inProgram: programID) { day in
             day.items.append(contentsOf: exerciseIDs.map { PlanItem(exerciseID: $0, restSeconds: rest) })
         }
@@ -694,29 +819,55 @@ public final class AppStore {
     // MARK: - Impostazioni, preferiti, recenti
 
     /// Modifica le impostazioni sul posto e programma il salvataggio.
+    ///
+    /// Comodità di compatibilità: lavora sul DTO e poi riporta indietro **solo** i
+    /// campi effettivamente cambiati, quindi cambiare l'unità di misura non invalida
+    /// chi osserva i preferiti. Per una singola preferenza restano preferibili i
+    /// metodi dedicati (``toggleFavorite(_:)``, ``markRecent(_:)``…).
     public func updateSettings(_ change: (inout UserSettings) -> Void) {
-        change(&settings)
+        var updated = settings
+        change(&updated)
+        applySettings(updated)
         markDirty(.settings)
     }
 
     public func isFavorite(_ exerciseID: String) -> Bool {
-        settings.isFavorite(exerciseID)
+        favoriteExerciseIDs.contains(exerciseID)
     }
 
     @discardableResult
     public func toggleFavorite(_ exerciseID: String) -> Bool {
-        if settings.favoriteExerciseIDs.contains(exerciseID) {
-            settings.favoriteExerciseIDs.remove(exerciseID)
+        if favoriteExerciseIDs.contains(exerciseID) {
+            favoriteExerciseIDs.remove(exerciseID)
         } else {
-            settings.favoriteExerciseIDs.insert(exerciseID)
+            favoriteExerciseIDs.insert(exerciseID)
         }
         markDirty(.settings)
-        return settings.isFavorite(exerciseID)
+        return favoriteExerciseIDs.contains(exerciseID)
     }
 
+    /// Porta un esercizio in testa ai recenti.
+    ///
+    /// Viene chiamata a **ogni apertura** di un esercizio, cioè durante la
+    /// transizione di push: se l'id è già in testa non c'è niente da cambiare e la
+    /// funzione non scrive nulla, così non parte nessuna invalidazione né alcun
+    /// salvataggio.
     public func markRecent(_ exerciseID: String) {
-        settings.markRecent(exerciseID)
+        guard !exerciseID.isEmpty, recentExerciseIDs.first != exerciseID else { return }
+        recentExerciseIDs = Self.markingRecent(exerciseID, in: recentExerciseIDs)
         markDirty(.settings)
+    }
+
+    /// Inserisce l'id in testa deduplicando e troncando alla soglia
+    /// (stessa semantica di ``UserSettings/markRecent(_:)``).
+    private static func markingRecent(_ exerciseID: String, in recents: [String]) -> [String] {
+        var updated = recents
+        updated.removeAll { $0 == exerciseID }
+        updated.insert(exerciseID, at: 0)
+        if updated.count > UserSettings.maxRecentExercises {
+            updated.removeLast(updated.count - UserSettings.maxRecentExercises)
+        }
+        return updated
     }
 
     // MARK: - Sessione attiva
@@ -777,7 +928,7 @@ public final class AppStore {
             exerciseID: exerciseID,
             targetSets: max(1, targetSets),
             measure: measureKind == .duration ? .duration(seconds: 30) : .default,
-            restSeconds: settings.defaultRestSeconds
+            restSeconds: defaultRestSeconds
         )
         var entry = makeEntry(for: item, before: now())
         entry.planItemID = nil
@@ -916,7 +1067,7 @@ public final class AppStore {
     /// rimpiazzare anche con un esercizio inventato dall'utente.
     public func alternatives(for exerciseID: String, limit: Int = 12) -> [Exercise] {
         guard let repository = searchableLibrary, let exercise = exercise(id: exerciseID) else { return [] }
-        return repository.alternatives(for: exercise, favorites: settings.favoriteExerciseIDs, limit: limit)
+        return repository.alternatives(for: exercise, favorites: favoriteExerciseIDs, limit: limit)
     }
 
     /// Chiude la sessione in corso, scarta le serie non spuntate e la archivia.
@@ -943,7 +1094,9 @@ public final class AppStore {
         sessions.append(session)
         sessions.sort { $0.startedAt > $1.startedAt }
         markDirty(.sessions)
-        for exerciseID in Set(session.exerciseIDs) { settings.markRecent(exerciseID) }
+        var recents = recentExerciseIDs
+        for exerciseID in Set(session.exerciseIDs) { recents = Self.markingRecent(exerciseID, in: recents) }
+        if recents != recentExerciseIDs { recentExerciseIDs = recents }
         markDirty(.settings)
         return session
     }
@@ -997,7 +1150,7 @@ public final class AppStore {
             measureKind: item.measure.kind,
             sets: sets,
             note: item.note,
-            restSeconds: item.restSeconds > 0 ? item.restSeconds : settings.defaultRestSeconds,
+            restSeconds: item.restSeconds > 0 ? item.restSeconds : defaultRestSeconds,
             supersetGroup: item.supersetGroup
         )
     }
@@ -1067,9 +1220,9 @@ public final class AppStore {
         programs = payload.programs
         sessions = payload.sessions.sorted { $0.startedAt > $1.startedAt }
         bodyEntries = payload.bodyEntries.sorted { $0.date > $1.date }
-        settings = payload.settings
+        applySettings(payload.settings)
         customExercises = Self.sortedCustomExercises(payload.customExercises)
-        mergedLibraryCache = nil
+        invalidateCustomCaches()
         activeSession = nil
         liveRecords = [:]
         persistActiveSession()
@@ -1112,7 +1265,8 @@ public final class AppStore {
         let settingsSnapshot = settings
         let customSnapshot = customExercises
 
-        enqueueWrite { [weak self] store in
+        enqueueWrite { store in
+            var failure: String?
             for file in files.sorted(by: { $0.rawValue < $1.rawValue }) {
                 do {
                     switch file {
@@ -1124,35 +1278,43 @@ public final class AppStore {
                     case .activeSession: break // gestita da persistActiveSession()
                     }
                 } catch {
-                    self?.saveError = "\(file.rawValue): \(error)"
+                    failure = "\(file.rawValue): \(error)"
                 }
             }
+            return failure
         }
     }
 
     /// Scrive (o cancella) subito il file della sessione attiva.
     private func persistActiveSession() {
         let snapshot = activeSession
-        enqueueWrite { [weak self] store in
+        enqueueWrite { store in
             do {
                 if let snapshot {
                     try await store.save(snapshot, to: .activeSession)
                 } else {
                     try await store.delete(.activeSession)
                 }
+                return nil
             } catch {
-                self?.saveError = "activeSession: \(error)"
+                return "activeSession: \(error)"
             }
         }
     }
 
     /// Accoda una scrittura dopo la precedente: l'ordine è garantito, l'ultima vince.
-    private func enqueueWrite(_ work: @escaping @MainActor (JSONFileStore) async -> Void) {
+    ///
+    /// Il lavoro è `nonisolated`: codifica JSON e scrittura su disco girano
+    /// sull'executor di ``JSONFileStore``, **mai** sul main actor. Sul main actor si
+    /// torna solo per annotare l'eventuale errore, che la UI mostra in Impostazioni.
+    /// Così un salvataggio non può far saltare un frame durante un'animazione.
+    private func enqueueWrite(_ work: @escaping @Sendable (JSONFileStore) async -> String?) {
         let previous = writeChain
         let store = self.store
-        writeChain = Task { @MainActor in
+        writeChain = Task { [weak self] in
             await previous?.value
-            await work(store)
+            let failure = await work(store)
+            if let failure { self?.saveError = failure }
         }
     }
 }

@@ -18,8 +18,6 @@ struct ProgramVariantScene: View {
         case create
         /// Archivio con due cicli passati.
         case archive
-        /// Scheda in modalità a giorni fissi.
-        case weekdays
     }
 
     let variant: Variant
@@ -57,8 +55,6 @@ struct ProgramVariantScene: View {
             ProgramFormSheet(mode: .create)
         case .archive:
             ProgramArchiveScreen()
-        case .weekdays:
-            ProgramScreen()
         }
     }
 }
@@ -88,8 +84,6 @@ enum ProgramMockData {
             store.addProgram(previousProgram(start: day(offset: -100), now: day(offset: -100)), makeActive: true)
             store.addProgram(SampleProgram.make(startDate: day(offset: -60), now: day(offset: -60)), makeActive: true)
             store.addProgram(richProgram(start: start, now: start), makeActive: true)
-        case .weekdays:
-            store.addProgram(weekdaysProgram(start: start, now: start), makeActive: true)
         }
 
         clock.date = MockData.now
@@ -111,7 +105,8 @@ enum ProgramMockData {
                     name: "Giorno A",
                     items: [
                         PlanItem(exerciseID: "0025", targetSets: 4, measure: .reps(min: 6, max: 8),
-                                 targetWeightKg: 80, warmupSets: 2, restSeconds: 150),
+                                 targetWeightKg: 80, warmupSets: 2, restSeconds: 150,
+                                 note: "presa media, fermo un secondo al petto"),
                         PlanItem(exerciseID: "0027", targetSets: 4, measure: .reps(min: 8, max: 10),
                                  targetWeightKg: 60, restSeconds: 120),
                         PlanItem(exerciseID: "0405", targetSets: 3, measure: .reps(min: 8, max: 12),
@@ -146,19 +141,6 @@ enum ProgramMockData {
             createdAt: now,
             updatedAt: now
         )
-    }
-
-    /// Scheda a giorni fissi: lunedì, mercoledì e venerdì.
-    private static func weekdaysProgram(start: Date, now: Date) -> Program {
-        var program = richProgram(start: start, now: now)
-        program.name = "Full body"
-        program.mode = .weekdays
-        program.accent = 5
-        let weekdays: [Weekday] = [.monday, .wednesday, .friday]
-        for index in program.days.indices where index < weekdays.count {
-            program.days[index].weekday = weekdays[index]
-        }
-        return program
     }
 
     /// Ciclo vecchio, solo per riempire l'archivio.

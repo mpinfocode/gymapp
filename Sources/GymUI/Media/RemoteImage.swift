@@ -3,7 +3,15 @@ import SwiftUI
 
 /// Immagine remota (thumbnail statica) resa dentro una tile bianca arrotondata.
 ///
-/// Decodifica con ImageIO, senza UIKit/AppKit; i byte arrivano da `MediaCache`.
+/// Decodifica con ImageIO, senza UIKit/AppKit; i byte arrivano da ``MediaCache`` e i
+/// `CGImage` già decodificati da ``DecodedImageCache``.
+///
+/// ## Scroll
+/// La cache dei decodificati è letta **sincronamente** dentro `body`, prima di
+/// qualunque `await`: una riga che ricompare nasce già piena al primo fotogramma,
+/// senza hop sull'actor, senza lettura da disco e senza ridecodifica. Per lo stesso
+/// motivo l'immagine **non** viene azzerata alla scomparsa: a tenerla in vita è la
+/// cache, non la view, e la view che esce dallo schermo annulla solo il caricamento.
 public struct RemoteImage: View {
 
     private let url: URL?
@@ -44,46 +52,69 @@ public struct RemoteImage: View {
         self.accessibilityTitle = accessibilityTitle
     }
 
+    private var contentSide: CGFloat { max(side - inset * 2, 1) }
+
+    /// Lato di decodifica in pixel: 3× il lato in punti copre anche i display @3x.
+    private var pixelSide: Int { max(Int(side * 3), 1) }
+
     public var body: some View {
+        // Lettura sincrona: se l'immagine è già decodificata la riga compare piena.
+        let shown = image ?? DecodedImageCache.shared.image(for: url, pixelSide: pixelSide)
         MediaTile(cornerRadius: cornerRadius, inset: inset, showsBorder: showsBorder) {
             ZStack {
-                if let image {
-                    Image(decorative: image, scale: 1)
+                if let shown {
+                    Image(decorative: shown, scale: 1)
                         .resizable()
-                        .interpolation(.high)
+                        .interpolation(.medium)
                         .aspectRatio(contentMode: .fit)
                 } else if failed || url == nil {
                     MediaErrorView { reloadToken += 1 }
                 } else {
-                    Shimmer()
-                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius - inset, style: .continuous))
+                    Shimmer(side: contentSide)
+                        .clipShape(RoundedRectangle(cornerRadius: max(cornerRadius - inset, 0), style: .continuous))
                 }
             }
-            .frame(width: side - inset * 2, height: side - inset * 2)
+            .frame(width: contentSide, height: contentSide)
         }
         .frame(width: side, height: side)
         .task(id: TaskKey(url: url, token: reloadToken)) { await load() }
-        .onDisappear { image = nil }
+        // Riga riciclata su un altro esercizio: la vecchia immagine non deve
+        // sopravvivere al cambio di sorgente (se la nuova è in cache, la lettura
+        // sincrona qui sopra la sostituisce nello stesso fotogramma).
+        .onChange(of: url) { _, _ in
+            image = nil
+            failed = false
+        }
         .accessibilityHidden(accessibilityTitle == nil)
         .accessibilityLabel(Text(accessibilityTitle ?? ""))
     }
 
     private func load() async {
         guard let url else { return }
-        failed = false
+        let pixels = pixelSide
+
+        // Già decodificata: niente rete, niente disco, niente decodifica.
+        if let cached = DecodedImageCache.shared.image(for: url, pixelSide: pixels) {
+            if image == nil { image = cached }
+            return
+        }
+
+        if failed { failed = false }
         do {
             let data = try await cache.data(for: url)
-            let pixels = Int(side * 3)
+            if Task.isCancelled { return }
             let decoded = await Task.detached(priority: .userInitiated) {
                 DecodedImage(image: GIFDecoder.decodeStill(data, maxPixelSize: pixels))
             }.value
+            if Task.isCancelled { return }
             guard let cgImage = decoded.image else {
                 failed = true
                 return
             }
+            DecodedImageCache.shared.insert(cgImage, for: url, pixelSide: pixels)
             image = cgImage
         } catch {
-            failed = true
+            if !Task.isCancelled { failed = true }
         }
     }
 }
@@ -95,6 +126,6 @@ private struct TaskKey: Hashable {
 }
 
 /// Trasporto sicuro del `CGImage` dal task di decodifica al main actor.
-private struct DecodedImage: @unchecked Sendable {
+struct DecodedImage: @unchecked Sendable {
     let image: CGImage?
 }

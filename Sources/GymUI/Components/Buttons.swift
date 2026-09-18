@@ -161,7 +161,7 @@ public struct CircleActionButton: View {
         Button(action: action) {
             VStack(spacing: Theme.Spacing.s) {
                 ZStack {
-                    Circle().fill(.ultraThinMaterial)
+                    Circle().fill(Theme.veil)
                     if let text {
                         Text(text)
                             .font(.system(.subheadline, weight: .semibold))

@@ -18,12 +18,40 @@ public struct TabItem<ID: Hashable & Sendable>: Identifiable, Sendable {
     }
 }
 
-/// Tab bar flottante a capsula traslucida: la tab selezionata è evidenziata da una
-/// pillola più scura che scorre con `matchedGeometryEffect`.
+/// Ingombro della ``FloatingTabBar``, per riservarle lo spazio corretto.
+///
+/// La shell disegna la barra sopra il contenuto: i contenuti scrollabili devono
+/// terminare almeno `scrollBottomInset` punti più in alto della safe area.
+public enum FloatingTabBarMetrics {
+
+    /// Altezza del contenuto di una tab (icona + etichetta), target di tap incluso.
+    public static let itemHeight: CGFloat = 52
+    /// Padding della capsula attorno alle tab.
+    public static let padding: CGFloat = 6
+    /// Altezza totale della capsula.
+    public static let height: CGFloat = itemHeight + padding * 2
+    /// Margine tra la capsula e il fondo della safe area.
+    public static let bottomMargin: CGFloat = Theme.Spacing.s
+    /// Spazio verticale complessivamente occupato dalla barra (capsula + margine).
+    public static let reservedHeight: CGFloat = height + bottomMargin
+    /// Padding in fondo da dare alle ScrollView, perché l'ultima riga non finisca
+    /// sotto la capsula.
+    public static let scrollBottomInset: CGFloat = reservedHeight + Theme.Spacing.xl
+}
+
+/// Tab bar flottante a capsula: la tab selezionata è evidenziata da una pillola
+/// `ink` che scorre con `matchedGeometryEffect`.
+///
+/// Lo sfondo è **pieno** (`surface`) con hairline `separator`, non un materiale
+/// traslucido: su iPhone il materiale rendeva una capsula grigio scuro sfumata e
+/// le tab non selezionate diventavano grigio su grigio. In più il backdrop blur di
+/// un materiale si ricalcola a ogni fotogramma mentre il contenuto scorre dietro,
+/// ed è uno dei costi GPU più alti di una schermata.
 public struct FloatingTabBar<ID: Hashable & Sendable>: View {
 
     private let items: [TabItem<ID>]
     @Binding private var selection: ID
+    private let onReselect: ((ID) -> Void)?
 
     @Namespace private var namespace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -31,9 +59,20 @@ public struct FloatingTabBar<ID: Hashable & Sendable>: View {
     /// - Parameters:
     ///   - items: le tab, nell'ordine di visualizzazione.
     ///   - selection: id della tab attiva.
-    public init(items: [TabItem<ID>], selection: Binding<ID>) {
+    ///   - onReselect: tocco su una tab **già** selezionata (la shell la usa per
+    ///     tornare alla radice della sezione e scorrere in cima). Anche senza questa
+    ///     chiusura il `set` del binding viene comunque invocato con lo stesso valore,
+    ///     così chi passa un `Binding(get:set:)` può intercettare il ritocco. Con un
+    ///     normale `@State` riassegnare lo stesso valore non cambia nulla: niente
+    ///     animazione, niente feedback aptico, nessun ridisegno.
+    public init(
+        items: [TabItem<ID>],
+        selection: Binding<ID>,
+        onReselect: ((ID) -> Void)? = nil
+    ) {
         self.items = items
         self._selection = selection
+        self.onReselect = onReselect
     }
 
     public var body: some View {
@@ -42,12 +81,13 @@ public struct FloatingTabBar<ID: Hashable & Sendable>: View {
                 tabButton(item)
             }
         }
-        .padding(6)
-        .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+        .padding(FloatingTabBarMetrics.padding)
+        .background(Theme.surface, in: Capsule(style: .continuous))
         .overlay(
             Capsule(style: .continuous)
                 .strokeBorder(Theme.separator, lineWidth: Theme.Size.hairline)
         )
+        .frame(height: FloatingTabBarMetrics.height)
         .haptic(.selection, trigger: selection)
         .accessibilityElement(children: .contain)
     }
@@ -56,11 +96,18 @@ public struct FloatingTabBar<ID: Hashable & Sendable>: View {
     private func tabButton(_ item: TabItem<ID>) -> some View {
         let isSelected = item.id == selection
         Button {
-            guard !isSelected else { return }
+            guard !isSelected else {
+                // Ritocco sulla tab attiva: la pillola non si muove, quindi niente
+                // animazione. Si riassegna comunque lo stesso valore perché il `set`
+                // del binding arrivi alla shell.
+                selection = item.id
+                onReselect?(item.id)
+                return
+            }
             if reduceMotion {
                 selection = item.id
             } else {
-                withAnimation(Theme.Motion.spring) { selection = item.id }
+                withAnimation(Theme.Motion.quick) { selection = item.id }
             }
         } label: {
             VStack(spacing: 3) {
@@ -73,7 +120,7 @@ public struct FloatingTabBar<ID: Hashable & Sendable>: View {
             }
             .foregroundStyle(isSelected ? Theme.onInk : Theme.textSecondary)
             .frame(maxWidth: .infinity)
-            .frame(height: 52)
+            .frame(height: FloatingTabBarMetrics.itemHeight)
             .background {
                 if isSelected {
                     Capsule(style: .continuous)

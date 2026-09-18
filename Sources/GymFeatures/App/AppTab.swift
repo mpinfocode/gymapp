@@ -1,39 +1,42 @@
 import GymUI
 
-/// I quattro tab della shell.
+/// I quattro tab della shell, nell'ordine in cui compaiono:
+/// **Home · Scheda · Esercizi · Misure** (SPEC §0).
+///
+/// `Home` è la schermata da palestra e la tab iniziale all'avvio.
 public enum AppTab: String, Hashable, Sendable, CaseIterable, Identifiable {
-    case today
-    case exercises
+    case home
     case program
-    case progress
+    case exercises
+    case measures
 
     public var id: String { rawValue }
 
     /// Etichetta italiana mostrata nella tab bar.
     public var title: String {
         switch self {
-        case .today: "Oggi"
-        case .exercises: "Esercizi"
+        case .home: "Home"
         case .program: "Scheda"
-        case .progress: "Progressi"
+        case .exercises: "Esercizi"
+        case .measures: "Misure"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .today: "house"
-        case .exercises: "square.grid.2x2"
+        case .home: "house"
         case .program: "list.bullet.rectangle"
-        case .progress: "chart.line.uptrend.xyaxis"
+        case .exercises: "square.grid.2x2"
+        case .measures: "ruler"
         }
     }
 
     var selectedSystemImage: String {
         switch self {
-        case .today: "house.fill"
-        case .exercises: "square.grid.2x2.fill"
+        case .home: "house.fill"
         case .program: "list.bullet.rectangle.fill"
-        case .progress: "chart.line.uptrend.xyaxis"
+        case .exercises: "square.grid.2x2.fill"
+        case .measures: "ruler.fill"
         }
     }
 

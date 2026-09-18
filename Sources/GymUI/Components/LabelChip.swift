@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Capsula traslucida con icona + testo minuscolo, in alto a sinistra delle card (stile pillowtalk).
+/// Capsula con velo traslucido, icona + testo minuscolo, in alto a sinistra delle card (stile pillowtalk).
 public struct LabelChip: View {
 
     private let text: String
@@ -30,7 +30,7 @@ public struct LabelChip: View {
         .foregroundStyle(foreground)
         .padding(.horizontal, Theme.Spacing.m)
         .padding(.vertical, Theme.Spacing.s - 1)
-        .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+        .background(Theme.veil, in: Capsule(style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(text))
     }

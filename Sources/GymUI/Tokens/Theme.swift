@@ -59,6 +59,17 @@ public enum Theme {
     /// Contenuto sopra `ink`.
     public static let onInk = Color.adaptive(light: Color(hex: 0xFFFFFF), dark: Color(hex: 0x1A1A1F))
 
+    /// Velo traslucido per chip e bottoni circolari appoggiati su un gradiente:
+    /// schiarisce il fondo senza sfocarlo.
+    ///
+    /// Sostituisce `.ultraThinMaterial`: un materiale ricalcola il backdrop blur a
+    /// ogni fotogramma (costo GPU alto, e su iPhone in chiaro rendeva grigio scuro),
+    /// mentre questo è un semplice riempimento composito.
+    public static let veil = Color.adaptive(
+        light: Color(hex: 0xFFFFFF, opacity: 0.62),
+        dark: Color(hex: 0xFFFFFF, opacity: 0.14)
+    )
+
     /// Contenuto sopra un riempimento pastello: quasi nero in entrambi i temi,
     /// perché i pastello restano chiari anche in dark.
     public static let onPastel = Color(hex: 0x1A1A1F)
@@ -148,8 +159,14 @@ public enum Theme {
     // MARK: - Movimento
 
     public enum Motion {
-        /// Spring morbida standard del sistema.
+        /// Spring morbida standard del sistema: cambi di contenuto ampi, apparizioni.
         public static let spring = Animation.spring(response: 0.45, dampingFraction: 0.85)
+        /// Spring breve per selezioni e navigazione (tab, segmented, chip di filtro).
+        ///
+        /// La `spring` standard, su un cambio di tab, si *sente* lenta: mezzo secondo
+        /// prima che la pillola arrivi. Qui la risposta è ~0.25 s, quasi critica
+        /// (niente rimbalzo), così il tocco sembra immediato.
+        public static let quick = Animation.spring(response: 0.25, dampingFraction: 0.9)
         /// Spring breve per micro-interazioni (check, chip).
         public static let snappy = Animation.spring(response: 0.28, dampingFraction: 0.72)
         /// Transizione di contenuto senza rimbalzo.

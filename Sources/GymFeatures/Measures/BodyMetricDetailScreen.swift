@@ -1,5 +1,4 @@
 import SwiftUI
-import Charts
 import GymCore
 import GymUI
 
@@ -17,8 +16,6 @@ public struct BodyMetricDetailScreen: View {
         self.metric = metric
     }
 
-    private var tint: AccentPalette { Theme.Metric.viola }
-
     public var body: some View {
         let series = app.store.bodySeries(of: metric)
         let start = range.start(from: app.now, calendar: app.calendar)
@@ -33,7 +30,14 @@ public struct BodyMetricDetailScreen: View {
                 CapsuleSegmentedControl(values: ChartRange.allCases, selection: $range, title: \.title)
 
                 summary(series: series, from: start)
-                chart(points)
+
+                BodyMetricChart(
+                    points: points,
+                    metric: metric,
+                    unit: app.unit,
+                    calendar: app.calendar
+                )
+
                 list(points.isEmpty ? series : points)
             }
             .padding(.horizontal, Theme.Spacing.page)
@@ -71,68 +75,6 @@ public struct BodyMetricDetailScreen: View {
             }
         }
         .accessibilityElement(children: .combine)
-    }
-
-    // MARK: - Grafico grande
-
-    @ViewBuilder
-    private func chart(_ points: [Stats.BodyPoint]) -> some View {
-        if points.count > 1 {
-            Chart(points) { point in
-                LineMark(
-                    x: .value("Data", point.date),
-                    y: .value(metric.displayName, point.value)
-                )
-                .interpolationMethod(.monotone)
-                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                .foregroundStyle(tint.deep)
-
-                PointMark(
-                    x: .value("Data", point.date),
-                    y: .value(metric.displayName, point.value)
-                )
-                .symbolSize(28)
-                .foregroundStyle(tint.deep)
-            }
-            .chartYScale(domain: domain(points))
-            .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 3)) { value in
-                    AxisValueLabel {
-                        if let date = value.as(Date.self) {
-                            Text(Formatters.dayAndMonth(date, calendar: app.calendar))
-                                .font(.captionText)
-                                .foregroundStyle(Theme.textTertiary)
-                        }
-                    }
-                }
-            }
-            .chartYAxis {
-                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
-                    AxisGridLine().foregroundStyle(Theme.separator)
-                    AxisValueLabel {
-                        if let number = value.as(Double.self) {
-                            Text(BodyFormat.number(number, metric: metric, unit: app.unit))
-                                .font(.captionText)
-                                .foregroundStyle(Theme.textTertiary)
-                        }
-                    }
-                }
-            }
-            .frame(height: 220)
-            .accessibilityLabel(Text(metric.displayName))
-        } else {
-            Text("Servono almeno due rilevazioni nel periodo")
-                .captionStyle(color: Theme.textTertiary)
-                .frame(maxWidth: .infinity, minHeight: 220, alignment: .center)
-        }
-    }
-
-    private func domain(_ points: [Stats.BodyPoint]) -> ClosedRange<Double> {
-        let values = points.map(\.value)
-        let low = values.min() ?? 0
-        let high = values.max() ?? 1
-        let padding = max((high - low) * 0.3, 0.5)
-        return (low - padding)...(high + padding)
     }
 
     // MARK: - Elenco dei valori

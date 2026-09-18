@@ -232,6 +232,79 @@ public struct Exercise: Codable, Sendable, Hashable, Identifiable {
     /// (`"3/4 sit-up"` → `"3/4 Sit-up"`, non `"3/4 Sit-Up"`).
     public var displayName: String { Exercise.capitalizingWords(name) }
 
+    // MARK: - Nome senza il prefisso dell'attrezzo
+
+    /// Prefissi di attrezzo riconosciuti in testa al nome, **dal più lungo al più
+    /// corto** (l'ordine conta: `"ez barbell curl"` deve vedere `ez barbell`, non
+    /// `barbell`).
+    ///
+    /// Sono solo i prefissi che nominano l'**attrezzo**, cioè un'informazione già
+    /// presente nella sottoriga ("Deltoidi · Manubri"). Restano fuori le parole che
+    /// descrivono il movimento e non l'attrezzo: `assisted` (una trazione assistita
+    /// non è una trazione), `self assisted`, `suspended`, `inverted`.
+    public static let equipmentNamePrefixes: [[String]] = [
+        ["resistance", "band"], ["stability", "ball"], ["exercise", "ball"],
+        ["medicine", "ball"], ["bosu", "ball"], ["olympic", "barbell"],
+        ["ez", "barbell"], ["smith", "machine"], ["leverage", "machine"],
+        ["sled", "machine"], ["wheel", "roller"], ["trap", "bar"], ["body", "weight"],
+        ["barbell"], ["dumbbell"], ["kettlebell"], ["cable"], ["band"], ["smith"],
+        ["lever"], ["sled"], ["roller"], ["rope"], ["weighted"], ["bodyweight"],
+    ]
+
+    /// Parole che da sole non identificano un esercizio: se togliendo il prefisso
+    /// resterebbe solo una di queste, il nome **non** si accorcia.
+    ///
+    /// `"barbell press"` diventerebbe "Press", che non dice quale spinta sia;
+    /// `"cable pushdown"` → "Pushdown" invece resta riconoscibile. Ci sono anche le
+    /// parole il cui oggetto *è* l'attrezzo (`"exercise ball hug"`, `"rope climb"`):
+    /// senza attrezzo il movimento sparisce.
+    public static let ambiguousShortNames: Set<String> = [
+        "press", "row", "raise", "extension", "pull", "push", "hold", "throw",
+        "carry", "hug", "climb", "slam", "toss", "pass", "run", "walk", "jump",
+        "stretch", "stand", "hang", "lift", "march",
+    ]
+
+    /// Il resto non può cominciare con una di queste parole, o si otterrebbe un
+    /// titolo monco ("exercise ball on the wall calf raise" → "On The Wall…").
+    private static let danglingLeadingWords: Set<String> = [
+        "on", "with", "and", "the", "to", "of", "a", "for", "or", "at", "from", "in",
+    ]
+
+    /// Nome capitalizzato **senza il prefisso dell'attrezzo** quando il nome inizia
+    /// con esso: `"dumbbell lateral raise"` → `"Lateral Raise"`, `"sled 45° leg press"`
+    /// → `"45° Leg Press"`.
+    ///
+    /// È il titolo da usare nelle liste, nel dettaglio, nelle righe della scheda e
+    /// nel picker: l'attrezzo resta nella sottoriga in italiano, quindi ripeterlo nel
+    /// titolo è solo rumore. ``displayName`` resta il nome completo e la **ricerca
+    /// continua a lavorare sul nome completo**.
+    ///
+    /// Non accorcia mai gli esercizi personalizzati (li scrive l'utente), né quando
+    /// il resto sarebbe vuoto, una parola ambigua (vedi ``ambiguousShortNames``) o
+    /// una preposizione.
+    public var shortDisplayName: String {
+        isCustom ? displayName : Exercise.capitalizingWords(Exercise.shortName(name))
+    }
+
+    /// Nome grezzo senza il prefisso dell'attrezzo; torna `name` invariato quando
+    /// non c'è niente da togliere. Vedi ``shortDisplayName``.
+    public static func shortName(_ name: String) -> String {
+        let words = name.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+        guard !words.isEmpty else { return name }
+        let lowered = words.map { $0.lowercased() }
+
+        for prefix in equipmentNamePrefixes {
+            guard lowered.count > prefix.count, Array(lowered.prefix(prefix.count)) == prefix else { continue }
+            let rest = Array(words.dropFirst(prefix.count))
+            let firstWord = rest[0].lowercased()
+            if danglingLeadingWords.contains(firstWord) { return name }
+            if rest.count == 1, ambiguousShortNames.contains(firstWord) { return name }
+            return rest.joined(separator: " ")
+        }
+
+        return name
+    }
+
     /// URL assoluto dell'immagine statica, `nil` se il dataset non la fornisce.
     public var imageURL: URL? { Exercise.mediaURL(for: imagePath) }
 

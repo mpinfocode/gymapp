@@ -8,6 +8,9 @@ import GymUI
 /// storico: l'accessorio a destra è generico (chevron, spunta, bottone, conteggio…)
 /// così la riga resta una sola in tutta l'app.
 ///
+/// Il titolo è ``Exercise/shortDisplayName``: il prefisso dell'attrezzo sparisce dal
+/// nome perché la sottoriga lo dice già in italiano.
+///
 ///     ExerciseRowView(exercise: exercise)                       // senza accessorio
 ///     ExerciseRowView(exercise: exercise) { Chevron() }         // accessorio libero
 ///     ExerciseRowView(exercise: exercise, subtitle: "4 × 8-12") // sottoriga forzata
@@ -48,7 +51,9 @@ public struct ExerciseRowView<Accessory: View>: View {
             )
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(exercise.displayName)
+                // Titolo senza il prefisso dell'attrezzo: "Manubri" è già scritto
+                // nella sottoriga, ripeterlo nel titolo è solo rumore (SPEC §0).
+                Text(exercise.shortDisplayName)
                     .font(.bodyEmphasis)
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(2)

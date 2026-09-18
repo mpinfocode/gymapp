@@ -51,7 +51,7 @@ struct AddToProgramSheet: View {
                 Text("Aggiungi alla scheda")
                     .sectionTitleStyle()
                     .accessibilityAddTraits(.isHeader)
-                Text(exercise.displayName)
+                Text(exercise.shortDisplayName)
                     .captionStyle()
                     .lineLimit(2)
             }

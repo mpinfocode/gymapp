@@ -47,6 +47,8 @@ public final class ExerciseRepository: Sendable {
     private let byID: [String: Exercise]
     /// Parallelo ad ``all``: stessa posizione, stesso esercizio.
     private let index: [IndexEntry]
+    /// Titolo e sottoriga già pronti, calcolati una volta all'indicizzazione.
+    private let presentationByID: [String: ExercisePresentation]
 
     /// - Parameters:
     ///   - exercises: record del dataset e/o esercizi personalizzati.
@@ -56,14 +58,63 @@ public final class ExerciseRepository: Sendable {
     ///     il dataset grezzo.
     public init(exercises: [Exercise], applyingCorrections: Bool = true) {
         let source = applyingCorrections ? ExerciseCorrections.apply(to: exercises) : exercises
-        let sorted = source.sorted { SearchText.normalize($0.name) < SearchText.normalize($1.name) }
-        all = sorted
-        byID = Dictionary(sorted.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        index = sorted.map(ExerciseRepository.makeIndexEntry)
+
+        // Decorate-sort-undecorate: la chiave di ordinamento si calcola **una volta
+        // per esercizio** invece che a ogni confronto (con `sorted` il comparatore
+        // gira ~n·log n volte, cioè ~28.000 normalizzazioni per 1.324 record).
+        var decorated = source.map { (key: SearchText.normalize($0.name), exercise: $0) }
+        decorated.sort { $0.key < $1.key }
+
+        all = decorated.map(\.exercise)
+        byID = Dictionary(decorated.map { ($0.exercise.id, $0.exercise) }, uniquingKeysWith: { first, _ in first })
+        index = decorated.map { ExerciseRepository.makeIndexEntry(for: $0.exercise, nameKey: $0.key) }
+        presentationByID = Dictionary(
+            decorated.map { ($0.exercise.id, ExercisePresentation(exercise: $0.exercise)) },
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 
-    private static func makeIndexEntry(for exercise: Exercise) -> IndexEntry {
-        let nameKey = SearchText.normalize(exercise.name)
+    /// Unisce due indici **già costruiti** senza rinormalizzare nulla.
+    ///
+    /// Serve alla proprietà di compatibilità ``AppStore/searchableLibrary``: le voci
+    /// di indice, le chiavi e le presentazioni sono già calcolate, quindi qui si fa
+    /// solo una fusione di due sequenze ordinate. Per la ricerca vera si usa
+    /// ``ExerciseLibraryIndex``, che non copia proprio niente.
+    init(merging base: ExerciseRepository, with extra: ExerciseRepository) {
+        var mergedAll: [Exercise] = []
+        var mergedIndex: [IndexEntry] = []
+        mergedAll.reserveCapacity(base.all.count + extra.all.count)
+        mergedIndex.reserveCapacity(base.index.count + extra.index.count)
+
+        var left = 0
+        var right = 0
+        while left < base.index.count || right < extra.index.count {
+            let takeLeft: Bool
+            if left >= base.index.count {
+                takeLeft = false
+            } else if right >= extra.index.count {
+                takeLeft = true
+            } else {
+                takeLeft = base.index[left].nameKey <= extra.index[right].nameKey
+            }
+            if takeLeft {
+                mergedAll.append(base.all[left])
+                mergedIndex.append(base.index[left])
+                left += 1
+            } else {
+                mergedAll.append(extra.all[right])
+                mergedIndex.append(extra.index[right])
+                right += 1
+            }
+        }
+
+        all = mergedAll
+        index = mergedIndex
+        byID = base.byID.merging(extra.byID) { first, _ in first }
+        presentationByID = base.presentationByID.merging(extra.presentationByID) { first, _ in first }
+    }
+
+    private static func makeIndexEntry(for exercise: Exercise, nameKey: String) -> IndexEntry {
         var terms: [String] = [
             nameKey,
             SearchText.normalize(exercise.category),
@@ -130,6 +181,13 @@ public final class ExerciseRepository: Sendable {
     /// Dizionario id → esercizio, utile per le aggregazioni di ``Stats``.
     public func exercisesByID() -> [String: Exercise] { byID }
 
+    /// Titolo e sottoriga **pre-calcolati** all'indicizzazione.
+    ///
+    /// Le righe della UI non devono ricostruire "Pettorali · Bilanciere" a ogni
+    /// `body`: qui la stringa esiste già ed è la stessa istanza per tutta la vita
+    /// dell'indice. Vedi ``ExercisePresentation``.
+    public func presentation(for id: String) -> ExercisePresentation? { presentationByID[id] }
+
     /// Valori distinti di una dimensione, ordinati per etichetta italiana.
     public var allCategories: [String] { distinct(\.category) }
     public var allEquipment: [String] { distinct(\.equipment) }
@@ -166,9 +224,19 @@ public final class ExerciseRepository: Sendable {
     ///   - favorites: id preferiti, necessari se `filter.favoritesOnly` è attivo.
     ///   - limit: numero massimo di risultati (`nil` = tutti).
     public func search(_ filter: ExerciseFilter, favorites: Set<String> = [], limit: Int? = nil) -> [Exercise] {
+        Self.ordered(rankedMatches(filter, favorites: favorites, isPrimary: true), limit: limit)
+    }
+
+    /// Risultati **non ordinati** con la loro chiave di ranking.
+    ///
+    /// È il mattone che permette a ``ExerciseLibraryIndex`` di fondere i risultati
+    /// dell'indice base con quelli del piccolo indice dei personalizzati senza
+    /// ricostruire un indice unico: si concatenano le due liste e si ordina con lo
+    /// stesso comparatore, quindi il ranking resta identico.
+    func rankedMatches(_ filter: ExerciseFilter, favorites: Set<String>, isPrimary: Bool) -> [RankedExercise] {
         let query = makeQuery(filter.query)
         var cache = [Int](repeating: Self.notComputed, count: query.terms.count)
-        var matches: [(match: Match, position: Int)] = []
+        var matches: [RankedExercise] = []
         matches.reserveCapacity(64)
 
         for position in index.indices {
@@ -176,28 +244,35 @@ public final class ExerciseRepository: Sendable {
             guard passesFacets(entry, position: position, filter: filter, favorites: favorites) else { continue }
             guard var match = score(entry, query: query, cache: &cache) else { continue }
             if match.matchesInName { match.extraNameTokens = extraNameTokens(entry, query: query) }
-            matches.append((match, position))
+            matches.append(
+                RankedExercise(
+                    exercise: all[position],
+                    rank: SearchRank(
+                        matchesInName: match.matchesInName,
+                        extraNameTokens: match.extraNameTokens,
+                        score: match.score,
+                        isRedundantVariant: match.isRedundantVariant,
+                        nameKey: entry.nameKey,
+                        isPrimary: isPrimary,
+                        position: position
+                    )
+                )
+            )
         }
+        return matches
+    }
 
-        // Ordinamento (vedi ``Match``): prima chi soddisfa la query dentro al **nome**,
-        // e lì vince l'esercizio "canonico", cioè quello con meno parole di troppo
-        // ("dumbbell lateral raise" prima di "dumbbell incline one arm lateral raise").
-        // Chi corrisponde solo per muscolo/attrezzo resta ordinato per punteggio.
-        matches.sort { lhs, rhs in
-            if lhs.match.matchesInName != rhs.match.matchesInName { return lhs.match.matchesInName }
-            if lhs.match.matchesInName {
-                if lhs.match.extraNameTokens != rhs.match.extraNameTokens {
-                    return lhs.match.extraNameTokens < rhs.match.extraNameTokens
-                }
-            } else if lhs.match.score != rhs.match.score {
-                return lhs.match.score > rhs.match.score
-            }
-            if lhs.match.isRedundantVariant != rhs.match.isRedundantVariant { return !lhs.match.isRedundantVariant }
-            return lhs.position < rhs.position
-        }
-
+    /// Ordina i risultati (di uno o più indici) e applica l'eventuale limite.
+    ///
+    /// Ordinamento (vedi ``Match``): prima chi soddisfa la query dentro al **nome**,
+    /// e lì vince l'esercizio "canonico", cioè quello con meno parole di troppo
+    /// ("dumbbell lateral raise" prima di "dumbbell incline one arm lateral raise").
+    /// Chi corrisponde solo per muscolo/attrezzo resta ordinato per punteggio.
+    static func ordered(_ matches: [RankedExercise], limit: Int? = nil) -> [Exercise] {
+        var matches = matches
+        matches.sort { SearchRank.precedes($0.rank, $1.rank) }
         let selected = limit.map { matches.prefix(max(0, $0)) } ?? matches[...]
-        return selected.map { all[$0.position] }
+        return selected.map(\.exercise)
     }
 
     /// Conteggi per i chip di filtro.
@@ -205,6 +280,12 @@ public final class ExerciseRepository: Sendable {
     /// Ogni dimensione è contata **ignorando il proprio filtro** (faceting classico):
     /// così selezionando "Petto" si continua a vedere quanti esercizi darebbe "Schiena".
     public func facets(for filter: ExerciseFilter, favorites: Set<String> = []) -> ExerciseFacets {
+        facetCounts(for: filter, favorites: favorites).makeFacets()
+    }
+
+    /// Conteggi grezzi dei facet, **additivi**: sommando quelli di due indici si
+    /// ottengono esattamente i conteggi di un indice unico (vedi ``ExerciseLibraryIndex``).
+    func facetCounts(for filter: ExerciseFilter, favorites: Set<String>) -> FacetCounts {
         let query = makeQuery(filter.query)
         var cache = [Int](repeating: Self.notComputed, count: query.terms.count)
 
@@ -247,17 +328,17 @@ public final class ExerciseRepository: Sendable {
             }
         }
 
-        return ExerciseFacets(
-            categories: Self.facetList(categoryCounts, label: Localization.category),
-            equipment: Self.facetList(equipmentCounts, label: Localization.equipment),
-            targets: Self.facetList(targetCounts, label: Localization.muscle),
+        return FacetCounts(
+            categories: categoryCounts,
+            equipment: equipmentCounts,
+            targets: targetCounts,
+            muscleGroups: muscleGroupCounts,
             favorites: favoritesCount,
-            total: total,
-            muscleGroups: Self.muscleGroupFacetList(muscleGroupCounts)
+            total: total
         )
     }
 
-    private static func facetList(_ counts: [String: Int], label: (String) -> String) -> [FacetCount] {
+    static func facetList(_ counts: [String: Int], label: (String) -> String) -> [FacetCount] {
         counts
             .map { FacetCount(value: $0.key, label: label($0.key), count: $0.value) }
             .sorted { lhs, rhs in
@@ -267,7 +348,7 @@ public final class ExerciseRepository: Sendable {
 
     /// I chip "zona colpita" restano nell'ordine anatomico di ``MuscleGroup``:
     /// sono pochi e fissi, se ballassero a ogni ricerca sarebbero inutilizzabili.
-    private static func muscleGroupFacetList(_ counts: [MuscleGroup: Int]) -> [MuscleGroupFacet] {
+    static func muscleGroupFacetList(_ counts: [MuscleGroup: Int]) -> [MuscleGroupFacet] {
         MuscleGroup.displayOrder.compactMap { group in
             guard let count = counts[group], count > 0 else { return nil }
             return MuscleGroupFacet(group: group, count: count)

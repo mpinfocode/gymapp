@@ -19,22 +19,19 @@ public struct SettingsScreen: View {
     public init() {}
 
     public var body: some View {
-        ZStack {
-            PageBackground()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
-                    header
-                    sampleProgram
-                    preferences
-                    offlineMedia
-                    about
-                }
-                .padding(.horizontal, Theme.Spacing.page)
-                .padding(.top, Theme.Spacing.l)
-                .padding(.bottom, Theme.Spacing.xxxl)
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
+                header
+                sampleProgram
+                preferences
+                offlineMedia
+                about
             }
+            .padding(.horizontal, Theme.Spacing.page)
+            .padding(.top, Theme.Spacing.l)
+            .padding(.bottom, Theme.Spacing.xxxl)
         }
+        .pageBackground()
         .task {
             name = app.store.settings.displayName
             await media.refreshSize()

@@ -4,8 +4,8 @@ import GymCore
 /// Stato della ricerca esercizi: è lo stesso nel catalogo e nel picker, così i due
 /// si comportano in modo identico senza duplicare nulla.
 ///
-/// Tiene solo le quattro dimensioni che l'utente vede davvero (testo, zona colpita,
-/// attrezzo, preferiti): categoria e target grezzi del dataset restano in GymCore.
+/// Tiene solo le dimensioni che l'utente vede davvero (testo, zona colpita, attrezzo,
+/// preferiti): categoria e target grezzi del dataset restano in GymCore.
 public struct ExerciseSearchModel: Sendable, Hashable {
 
     /// Testo digitato (accetta il gergo italiano: la traduzione la fa GymCore).
@@ -47,17 +47,10 @@ public struct ExerciseSearchModel: Sendable, Hashable {
     /// `true` se l'utente sta cercando qualcosa.
     public var hasQuery: Bool { !trimmedQuery.isEmpty }
 
-    /// Filtri che vivono dentro lo sheet (attrezzo, preferiti): è il numero che
-    /// accende il bottone filtro. I chip della zona colpita si vedono già da soli.
-    public var sheetFilterCount: Int {
-        equipment.count + (favoritesOnly ? 1 : 0)
+    /// `true` se almeno un filtro è attivo.
+    public var hasAnyFilter: Bool {
+        !equipment.isEmpty || favoritesOnly || !muscleGroups.isEmpty
     }
-
-    /// `true` se almeno un filtro (chip compresi) è attivo.
-    public var hasAnyFilter: Bool { sheetFilterCount > 0 || !muscleGroups.isEmpty }
-
-    /// Le sezioni "Recenti" e "Tutti" hanno senso solo a ricerca e filtri spenti.
-    public var showsBrowseSections: Bool { !hasQuery && !hasAnyFilter }
 
     public mutating func toggle(_ group: MuscleGroup) {
         if muscleGroups.contains(group) { muscleGroups.remove(group) } else { muscleGroups.insert(group) }

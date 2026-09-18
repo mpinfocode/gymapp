@@ -4,9 +4,10 @@ import GymUI
 
 /// Editor di un giorno della scheda: è qui che si ricopia il foglio dell'istruttore.
 ///
-/// Titolo rinominabile, giorno della settimana (solo in modalità a giorni fissi),
-/// elenco riordinabile con swipe per eliminare, e un solo bottone primario:
-/// "Aggiungi esercizi". Ogni modifica si salva subito, non c'è nessun "Salva".
+/// Questa pagina è **sempre in modifica** (SPEC §0: la consultazione sta nella Home):
+/// titolo rinominabile, elenco riordinabile con swipe per eliminare, tocco sulla riga
+/// che apre l'editor dell'esercizio e un solo bottone primario, "Aggiungi esercizi".
+/// Ogni modifica si salva subito, non c'è nessun "Salva".
 ///
 /// È `public` solo perché la scena di screenshot `scheda-giorno` la rende da sola:
 /// dentro l'app ci si arriva toccando un giorno in ``ProgramScreen``.
@@ -32,17 +33,21 @@ public struct ProgramDayEditor: View {
     }
 
     public var body: some View {
-        ZStack {
-            PageBackground()
-
+        Group {
             if let day {
                 VStack(alignment: .leading, spacing: 0) {
                     header(day)
                     content(day)
-                    addButton
                 }
+                // Il bottone primario sta in un `safeAreaInset`, non in fondo a
+                // una VStack: così resta sopra l'home indicator e, soprattutto,
+                // la `List` riceve l'inset corrispondente e l'ultima riga resta
+                // raggiungibile invece di finire sotto il bottone.
+                .safeAreaInset(edge: .bottom) { addButton }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .pageBackground()
         .navigationBarTitleDisplayModeInline()
         .onAppear(perform: load)
         .keyboardDoneToolbar { nameFocused = false }
@@ -85,9 +90,6 @@ public struct ProgramDayEditor: View {
                     .accessibilityLabel(Text("Nome del giorno"))
 
                 ProgramMenu(accessibilityTitle: "Azioni sul giorno") {
-                    Button("Inizia questo allenamento") {
-                        app.store.startSession(programID: programID, dayID: dayID)
-                    }
                     Button("Duplica il giorno", action: duplicate)
                     Button("Elimina il giorno", role: .destructive) { confirmsDeletion = true }
                 }
@@ -98,37 +100,10 @@ public struct ProgramDayEditor: View {
                     .font(.captionText)
                     .foregroundStyle(Theme.textSecondary)
             }
-
-            if program?.mode == .weekdays {
-                weekdayPicker(day)
-            }
         }
         .padding(.horizontal, Theme.Spacing.page)
         .padding(.top, Theme.Spacing.l)
         .padding(.bottom, Theme.Spacing.l)
-    }
-
-    private func weekdayPicker(_ day: ProgramDay) -> some View {
-        HStack(spacing: Theme.Spacing.xs + 2) {
-            ForEach(Weekday.allCases) { weekday in
-                let isSelected = day.weekday == weekday
-                Button {
-                    app.store.editDay(id: dayID, inProgram: programID) {
-                        $0.weekday = isSelected ? nil : weekday
-                    }
-                } label: {
-                    Text(weekday.letter)
-                        .font(.system(.subheadline, weight: isSelected ? .semibold : .regular))
-                        .foregroundStyle(isSelected ? Theme.accent.onFill : Theme.textSecondary)
-                        .frame(width: Theme.Size.minTapTarget, height: Theme.Size.minTapTarget)
-                        .background(isSelected ? Theme.accent.fill : Theme.surface, in: Circle())
-                        .contentShape(Circle())
-                }
-                .buttonStyle(PressableButtonStyle())
-                .accessibilityLabel(Text(weekday.displayName))
-                .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-            }
-        }
     }
 
     // MARK: - Elenco
@@ -234,6 +209,9 @@ public struct ProgramDayEditor: View {
         .padding(.horizontal, Theme.Spacing.page)
         .padding(.top, Theme.Spacing.m)
         .padding(.bottom, Theme.Spacing.s)
+        // Il bottone galleggia sopra la lista: senza fondo si vedrebbero le
+        // righe passargli dietro.
+        .background(Theme.background)
     }
 
     private func add(_ exercises: [Exercise]) {

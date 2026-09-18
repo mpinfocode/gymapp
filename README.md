@@ -68,6 +68,45 @@ Rigenerare il dataset dall'upstream (normalmente non serve: il file è già comm
 
 ---
 
+## Provare l'app sul Mac
+
+Prima di aspettare una build sull'iPhone si può usare l'app davvero, in una finestra formato
+telefono: si clicca, si scorre, si naviga fra i tab, si avvia un allenamento.
+
+```bash
+swift run GymPreview                             # iPhone 17, dati di esempio
+swift run GymPreview --vuoto                     # primo avvio: nessun dato
+swift run GymPreview --sessione                  # con un allenamento già in corso
+swift run GymPreview --scuro --dispositivo=max   # tema scuro, iPhone 17 Pro Max
+```
+
+Dai menu in alto si cambia al volo **Dispositivo** (iPhone SE 375 × 667, iPhone 17 393 × 852,
+iPhone 17 Pro Max 440 × 956), **Aspetto** (chiaro / scuro) e **Dati** (dati di esempio, primo
+avvio vuoto, sessione in corso). Chiudere la finestra chiude lo strumento (cmd+Q).
+
+I dati sono finti e stanno in una cartella temporanea nuova a ogni caricamento: l'anteprima non
+legge né scrive i dati veri dell'app. Le GIF degli esercizi si scaricano dalla rete come sul
+telefono.
+
+**Cosa è fedele:** dimensioni in punti, safe area (barra di stato e home indicator), layout,
+navigazione, testi, tipografia dinamica, colori e stati vuoti.
+
+**Cosa non lo è**, e va verificato sul telefono vero:
+
+- **Sheet a mezza altezza e schermata della sessione:** su macOS diventano finestre modali
+  attaccate alla finestra, spesso più larghe del telefono; su iPhone sono una cover a schermo
+  intero o uno sheet trascinabile.
+- **Tastiera:** si scrive con quella del Mac, quindi non si vede il tastierino numerico, la barra
+  "Fatto" né il contenuto che scorre per non finire sotto la tastiera.
+- **Gesture:** niente swipe dal bordo per tornare indietro, niente pull to refresh con il dito,
+  niente pressione lunga con haptics. Il click vale come tap, la rotella o il trackpad come scroll.
+- **Haptics e notifiche:** disattivati.
+- **Materiali e sfocature** (`.ultraThinMaterial` e simili) e le animazioni rendono diversamente su
+  macOS, e le prestazioni non dicono nulla su quelle dell'iPhone (GPU e scorrimento a 120 Hz).
+- La barra di stato è **disegnata**, non è quella di iOS: serve solo a occupare i punti giusti.
+
+---
+
 ## Build CI
 
 [`.github/workflows/ios.yml`](.github/workflows/ios.yml) gira su `push` verso `main` e su

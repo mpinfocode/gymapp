@@ -2,45 +2,42 @@ import SwiftUI
 import GymCore
 import GymUI
 
-/// Tab **Scheda**: la scheda attiva in alto (card con il suo gradiente, settimana
-/// e scadenza), i giorni come righe semplici, l'archivio in fondo (SPEC §5.3).
+/// Tab **Scheda**: gestione della scheda attiva (card con il suo gradiente, settimana
+/// e scadenza), i giorni come righe semplici, l'archivio in fondo (SPEC §0).
 ///
-/// Una cosa sola per schermata: qui si guarda la scheda e si entra in un giorno.
-/// Tutto il resto (modifica dettagli, duplica, archivia, elimina) sta nel menu "…".
+/// Qui si **modifica**: la consultazione da palestra sta nella Home. Una cosa sola per
+/// schermata: si entra in un giorno; tutto il resto (nuovo giorno, dettagli, duplica,
+/// archivia, elimina) sta nel menu "…".
 public struct ProgramScreen: View {
 
     @Environment(AppEnvironment.self) private var app
 
-    /// Navigazione locale: giorno aperto oppure archivio.
-    @State private var route: ProgramRoute?
     /// Sheet di creazione o modifica dei dettagli.
     @State private var form: ProgramFormSheet.Mode?
     @State private var confirmsDeletion = false
 
+    private static let topAnchor = "program-top"
+
     public init() {}
 
     public var body: some View {
-        ZStack {
-            PageBackground()
-
+        ScrollViewReader { proxy in
             ScrollView {
-                if let program = app.store.activeProgram {
-                    active(program)
-                } else {
-                    empty
+                Group {
+                    if let program = app.store.activeProgram {
+                        active(program)
+                    } else {
+                        empty
+                    }
                 }
+                .id(Self.topAnchor)
+            }
+            // Ritocco sull'icona del tab già selezionato: si torna in cima.
+            .onChange(of: app.router.scrollToTopToken(for: .program)) { _, _ in
+                withAnimation(Theme.Motion.quick) { proxy.scrollTo(Self.topAnchor, anchor: .top) }
             }
         }
-        .navigationDestination(item: $route) { route in
-            switch route {
-            case .day(let id):
-                if let program = app.store.activeProgram {
-                    ProgramDayEditor(programID: program.id, dayID: id)
-                }
-            case .archive:
-                ProgramArchiveScreen()
-            }
-        }
+        .pageBackground()
         .sheet(item: $form) { mode in
             ProgramFormSheet(mode: mode)
         }
@@ -59,6 +56,7 @@ public struct ProgramScreen: View {
 
     private func active(_ program: Program) -> some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
+            titleBar
             card(program)
             days(of: program)
             archiveRow
@@ -68,16 +66,40 @@ public struct ProgramScreen: View {
         .padding(.bottom, Theme.Spacing.xxl)
     }
 
+    /// Testata minima: il titolo della sezione e l'ingranaggio delle Impostazioni,
+    /// che la shell presenta da sé (``Router/presentSettings()``).
+    private var titleBar: some View {
+        HStack(alignment: .center, spacing: Theme.Spacing.m) {
+            Text("Scheda")
+                .greetingStyle()
+                .accessibilityAddTraits(.isHeader)
+
+            Spacer(minLength: Theme.Spacing.s)
+
+            Button {
+                app.router.presentSettings()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(.body, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: Theme.Size.minTapTarget, height: Theme.Size.minTapTarget)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(PressableButtonStyle())
+            .accessibilityLabel(Text("Impostazioni"))
+        }
+    }
+
     private func card(_ program: Program) -> some View {
         ZStack(alignment: .topTrailing) {
             HeroCard(
                 seed: program.accent,
-                height: 260,
-                chipText: program.mode.displayName,
+                height: 220,
+                chipText: expiryWarning(program),
                 animated: true
             ) { palette in
                 Text(program.name)
-                    .font(.greeting)
+                    .font(.sectionTitle)
                     .foregroundStyle(palette.foreground)
                     .lineLimit(2)
                     .minimumScaleFactor(0.7)
@@ -89,6 +111,7 @@ public struct ProgramScreen: View {
             }
 
             ProgramMenu(accessibilityTitle: "Azioni sulla scheda", background: Theme.surfaceElevated) {
+                Button("Aggiungi un giorno") { addDay(to: program) }
                 Button("Modifica i dettagli") { form = .edit(program.id) }
                 Button("Duplica come nuova scheda") {
                     app.store.duplicateProgram(id: program.id, activate: false)
@@ -107,45 +130,51 @@ public struct ProgramScreen: View {
             Text("Giorni").overlineStyle()
 
             if program.days.isEmpty {
-                Text("Nessun giorno. Aggiungi il primo per cominciare a ricopiare la scheda.")
-                    .font(.captionText)
+                Button {
+                    addDay(to: program)
+                } label: {
+                    HStack(spacing: Theme.Spacing.s) {
+                        Image(systemName: "plus")
+                            .font(.system(.footnote, weight: .semibold))
+                        Text("Aggiungi il primo giorno")
+                            .font(.system(.subheadline, weight: .medium))
+                    }
                     .foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, Theme.Spacing.s)
+                    .frame(minHeight: Theme.Size.minTapTarget, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityLabel(Text("Aggiungi il primo giorno"))
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(program.days.enumerated()), id: \.element.id) { index, day in
                         if index > 0 {
                             Divider().overlay(Theme.separator)
                         }
-                        dayRow(day, mode: program.mode)
+                        dayRow(day, programID: program.id)
                     }
                 }
             }
-
-            Button {
-                let name = ProgramPresentation.defaultDayName(at: program.days.count)
-                let day = app.store.addDay(name: name, toProgram: program.id)
-                route = .day(day.id)
-            } label: {
-                HStack(spacing: Theme.Spacing.s) {
-                    Image(systemName: "plus")
-                        .font(.system(.footnote, weight: .semibold))
-                    Text("Aggiungi un giorno")
-                        .font(.system(.subheadline, weight: .medium))
-                }
-                .foregroundStyle(Theme.textSecondary)
-                .frame(minHeight: Theme.Size.minTapTarget, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(PressableButtonStyle())
-            .accessibilityLabel(Text("Aggiungi un giorno"))
         }
     }
 
-    private func dayRow(_ day: ProgramDay, mode: ProgramMode) -> some View {
+    /// Un giorno nuovo si crea dal menu "…" e si apre subito: è lì che si scrive.
+    private func addDay(to program: Program) {
+        let name = ProgramPresentation.defaultDayName(at: program.days.count)
+        let day = app.store.addDay(name: name, toProgram: program.id)
+        app.router.push(.programDay(programID: program.id, dayID: day.id))
+    }
+
+    /// Chip della card: compare **solo** quando c'è qualcosa da segnalare.
+    private func expiryWarning(_ program: Program) -> String? {
+        if program.isExpired(asOf: app.now, calendar: app.calendar) { return "scaduta" }
+        if program.isExpiringSoon(asOf: app.now, calendar: app.calendar) { return "in scadenza" }
+        return nil
+    }
+
+    private func dayRow(_ day: ProgramDay, programID: UUID) -> some View {
         Button {
-            route = .day(day.id)
+            app.router.push(.programDay(programID: programID, dayID: day.id))
         } label: {
             HStack(spacing: Theme.Spacing.m) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -153,7 +182,7 @@ public struct ProgramScreen: View {
                         .font(.bodyEmphasis)
                         .foregroundStyle(Theme.textPrimary)
                         .multilineTextAlignment(.leading)
-                    Text(ProgramPresentation.daySubtitle(day, mode: mode))
+                    Text(ProgramPresentation.daySubtitle(day))
                         .font(.captionText)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.leading)
@@ -180,7 +209,7 @@ public struct ProgramScreen: View {
         let archived = app.store.archivedPrograms
         if !archived.isEmpty {
             Button {
-                route = .archive
+                app.router.push(.programArchive)
             } label: {
                 HStack(spacing: Theme.Spacing.s) {
                     Text("Archivio")
@@ -229,12 +258,6 @@ public struct ProgramScreen: View {
         .padding(.horizontal, Theme.Spacing.page)
         .padding(.top, Theme.Spacing.xxxl * 2)
     }
-}
-
-/// Destinazioni interne alla sezione Scheda: restano locali, senza toccare `AppRoute`.
-enum ProgramRoute: Hashable {
-    case day(UUID)
-    case archive
 }
 
 /// Menu "…" della scheda e del giorno: stesso aspetto ovunque.

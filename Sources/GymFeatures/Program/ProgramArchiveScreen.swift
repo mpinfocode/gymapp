@@ -18,30 +18,27 @@ public struct ProgramArchiveScreen: View {
     public init() {}
 
     public var body: some View {
-        ZStack {
-            PageBackground()
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Spacing.l) {
+                Text("Archivio")
+                    .sectionTitleStyle()
+                    .accessibilityAddTraits(.isHeader)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: Theme.Spacing.l) {
-                    Text("Archivio")
-                        .sectionTitleStyle()
-                        .accessibilityAddTraits(.isHeader)
-
-                    if app.store.archivedPrograms.isEmpty {
-                        Text("Nessuna scheda in archivio.")
-                            .font(.captionText)
-                            .foregroundStyle(Theme.textSecondary)
-                    } else {
-                        ForEach(app.store.archivedPrograms) { program in
-                            row(program)
-                        }
+                if app.store.archivedPrograms.isEmpty {
+                    Text("Nessuna scheda in archivio.")
+                        .font(.captionText)
+                        .foregroundStyle(Theme.textSecondary)
+                } else {
+                    ForEach(app.store.archivedPrograms) { program in
+                        row(program)
                     }
                 }
-                .padding(.horizontal, Theme.Spacing.page)
-                .padding(.top, Theme.Spacing.l)
-                .padding(.bottom, Theme.Spacing.xxl)
             }
+            .padding(.horizontal, Theme.Spacing.page)
+            .padding(.top, Theme.Spacing.l)
+            .padding(.bottom, Theme.Spacing.xxl)
         }
+        .pageBackground()
         .alert("Eliminare la scheda?", isPresented: deletionBinding) {
             Button("Annulla", role: .cancel) { pendingDeletion = nil }
             Button("Elimina", role: .destructive) {

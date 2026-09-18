@@ -1,128 +1,86 @@
 import SwiftUI
+import Charts
 import GymCore
 import GymUI
 
-// Mattoni piccoli usati solo dentro Progressi. I mini grafici stanno già in GymUI:
-// qui ci sono solo gli involucri che decidono cosa mostrare quando il dato manca.
+// Mattoni piccoli usati solo dentro Misure: il grafico di una metrica corporea e
+// le righe/controlli che si ripetono fra la radice, il dettaglio e il foglio di
+// inserimento.
 
-/// Slot vuoto di una card: nessun numero finto, solo una riga sobria.
-struct EmptyChartSlot: View {
+/// Curva di una metrica corporea: una sola linea con i punti, assi discreti.
+///
+/// La usano sia la testata "peso" della tab Misure sia il dettaglio di una metrica,
+/// così i due grafici sono identici e non c'è una seconda configurazione da tenere
+/// allineata.
+struct BodyMetricChart: View {
 
-    var body: some View {
-        Text("Nessun dato")
-            .font(.captionText)
-            .foregroundStyle(Theme.textTertiary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-    }
-}
+    let points: [Stats.BodyPoint]
+    let metric: BodyMetricKind
+    let unit: WeightUnit
+    let calendar: Calendar
+    var height: CGFloat = 220
 
-/// Curva della card, o stato vuoto se i punti non bastano.
-struct SparklineSlot: View {
-
-    let values: [Double]
-    let tint: AccentPalette
-    var accessibilityTitle: String = "Andamento"
+    private var tint: AccentPalette { Theme.Metric.viola }
 
     var body: some View {
-        if values.count > 1 {
-            Sparkline(values: values, tint: tint, accessibilityTitle: accessibilityTitle)
-        } else {
-            EmptyChartSlot()
-        }
-    }
-}
+        if points.count > 1 {
+            Chart(points) { point in
+                LineMark(
+                    x: .value("Data", point.date),
+                    y: .value(metric.displayName, point.value)
+                )
+                .interpolationMethod(.monotone)
+                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                .foregroundStyle(tint.deep)
 
-/// Istogramma della card, o stato vuoto se non c'è niente da mostrare.
-struct BarsSlot: View {
-
-    let values: [Double]
-    let tint: AccentPalette
-    var highlightsLast: Bool = true
-    var accessibilityTitle: String = "Valori per periodo"
-
-    var body: some View {
-        if values.contains(where: { $0 > 0 }) {
-            MiniBars(
-                values: values,
-                tint: tint,
-                highlightedIndex: highlightsLast ? values.count - 1 : nil,
-                accessibilityTitle: accessibilityTitle
-            )
-        } else {
-            EmptyChartSlot()
-        }
-    }
-}
-
-/// Barre orizzontali sottili: serie per gruppo muscolare della settimana.
-struct MuscleGroupBars: View {
-
-    let facets: [MuscleGroupFacet]
-
-    private var maximum: Double {
-        Double(facets.map(\.count).max() ?? 1)
-    }
-
-    var body: some View {
-        VStack(spacing: Theme.Spacing.m) {
-            ForEach(facets) { facet in
-                HStack(spacing: Theme.Spacing.m) {
-                    Text(facet.label)
-                        .font(.captionText)
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
-                        .frame(width: 92, alignment: .leading)
-
-                    ThickProgressBar(
-                        value: Double(facet.count),
-                        total: maximum,
-                        height: 6,
-                        tint: Theme.ink
-                    )
-
-                    Text("\(facet.count)")
-                        .font(.system(.footnote, weight: .medium))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.textPrimary)
-                        .frame(width: 22, alignment: .trailing)
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(Text(facet.label))
-                .accessibilityValue(Text("\(facet.count) serie"))
+                PointMark(
+                    x: .value("Data", point.date),
+                    y: .value(metric.displayName, point.value)
+                )
+                .symbolSize(28)
+                .foregroundStyle(tint.deep)
             }
-        }
-    }
-}
-
-/// Riga di tre numeri con etichetta sotto (durata, volume, serie).
-struct StatTriple: View {
-
-    struct Item: Identifiable {
-        let label: String
-        let value: String
-        var id: String { label }
-    }
-
-    let items: [Item]
-
-    var body: some View {
-        HStack(alignment: .top, spacing: Theme.Spacing.l) {
-            ForEach(items) { item in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.value)
-                        .font(.bigNumber)
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                    Text(item.label)
-                        .font(.captionText)
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
+            .chartYScale(domain: domain)
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 3)) { value in
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(Formatters.dayAndMonth(date, calendar: calendar))
+                                .font(.captionText)
+                                .foregroundStyle(Theme.textTertiary)
+                        }
+                    }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityElement(children: .combine)
             }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
+                    AxisGridLine().foregroundStyle(Theme.separator)
+                    AxisValueLabel {
+                        if let number = value.as(Double.self) {
+                            Text(BodyFormat.number(number, metric: metric, unit: unit))
+                                .font(.captionText)
+                                .foregroundStyle(Theme.textTertiary)
+                        }
+                    }
+                }
+            }
+            .frame(height: height)
+            .accessibilityLabel(Text(metric.displayName))
+        } else {
+            Text("Servono almeno due rilevazioni nel periodo")
+                .captionStyle(color: Theme.textTertiary)
+                .frame(maxWidth: .infinity, minHeight: height, alignment: .center)
         }
+    }
+
+    /// Scala verticale con un po' d'aria sopra e sotto: una variazione di mezzo kg
+    /// non deve diventare una montagna.
+    private var domain: ClosedRange<Double> {
+        let values = points.map(\.value)
+        let low = values.min() ?? 0
+        let high = values.max() ?? 1
+        let padding = max((high - low) * 0.3, 0.5)
+        return (low - padding)...(high + padding)
     }
 }
 
@@ -210,7 +168,7 @@ struct CollapsibleSection<Content: View>: View {
     }
 }
 
-/// Bottone circolare discreto da 44pt su `surface`: il "+" delle testate.
+/// Bottone circolare discreto da 44pt su `surface`: il "+" e l'ingranaggio della testata.
 /// Non ruba la scena al titolo come farebbe una capsula `ink`.
 struct CircleIconButton: View {
 
@@ -232,7 +190,7 @@ struct CircleIconButton: View {
     }
 }
 
-/// Menu "…" di una riga o di una pagina: stesso aspetto ovunque.
+/// Menu "…" di una riga: stesso aspetto ovunque.
 struct EllipsisMenu<Content: View>: View {
 
     var accessibilityTitle: String = "Altre azioni"

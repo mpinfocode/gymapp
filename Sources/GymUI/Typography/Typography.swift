@@ -11,50 +11,32 @@ import SwiftUI
 extension Font {
 
     /// Saluto grande: 34 semibold ("Buongiorno, Francesco").
-    public static var greeting: Font {
-        .system(.largeTitle, weight: .semibold)
-    }
+    public static let greeting: Font = .system(.largeTitle, weight: .semibold)
 
     /// Titolo di sezione: 22 semibold ("Oggi", "Questa settimana").
-    public static var sectionTitle: Font {
-        .system(.title2, weight: .semibold)
-    }
+    public static let sectionTitle: Font = .system(.title2, weight: .semibold)
 
     /// Etichetta piccola maiuscola: 12 semibold ("VENERDÌ 18 SETTEMBRE").
     /// Il maiuscolo e il colore secondario li applica `View.overlineStyle(color:)`.
-    public static var overline: Font {
-        .system(.caption, weight: .semibold)
-    }
+    public static let overline: Font = .system(.caption, weight: .semibold)
 
     /// Momenti guida grandi, leggeri e minuscoli: 28 light ("pronto per iniziare?").
-    public static var whisper: Font {
-        .system(.title, weight: .light)
-    }
+    public static let whisper: Font = .system(.title, weight: .light)
 
     /// Numero grande con cifre tabellari: 28 medium.
-    public static var bigNumber: Font {
-        .system(.title, weight: .medium).monospacedDigit()
-    }
+    public static let bigNumber: Font = .system(.title, weight: .medium).monospacedDigit()
 
     /// Corpo del testo.
-    public static var bodyText: Font {
-        .system(.body, weight: .regular)
-    }
+    public static let bodyText: Font = .system(.body, weight: .regular)
 
     /// Corpo enfatizzato (titoli di riga).
-    public static var bodyEmphasis: Font {
-        .system(.body, weight: .semibold)
-    }
+    public static let bodyEmphasis: Font = .system(.body, weight: .semibold)
 
     /// Didascalia grigia.
-    public static var captionText: Font {
-        .system(.footnote, weight: .regular)
-    }
+    public static let captionText: Font = .system(.footnote, weight: .regular)
 
     /// Valore numerico di una cella serie.
-    public static var cellNumber: Font {
-        .system(.body, weight: .semibold).monospacedDigit()
-    }
+    public static let cellNumber: Font = .system(.body, weight: .semibold).monospacedDigit()
 }
 
 // MARK: - Stili con dimensione fuori scala di sistema

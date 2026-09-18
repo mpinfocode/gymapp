@@ -18,5 +18,7 @@ let package = Package(
         .executableTarget(name: "GymChecks", dependencies: ["GymCore"]),
         // Solo macOS: rende le schermate in PNG (docs/preview, fuori da git) per la revisione visiva senza Xcode.
         .executableTarget(name: "GymSnapshots", dependencies: ["GymCore", "GymUI", "GymFeatures"]),
+        // Solo macOS: l'app in una finestra formato iPhone, interattiva, per provare navigazione e layout prima di una build TestFlight.
+        .executableTarget(name: "GymPreview", dependencies: ["GymCore", "GymUI", "GymFeatures"]),
     ]
 )

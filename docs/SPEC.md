@@ -4,6 +4,30 @@ App iOS personale (un solo utente) per allenarsi in palestra: libreria di 1.324 
 la scheda dell'istruttore (giorni, esercizi, serie, carichi, recuperi), sessione di allenamento con log di serie/ripetizioni/carico, timer di recupero, storico e progressi.
 Lingua: **solo italiano** (UI e istruzioni esercizi; nessuna scelta lingua, `en` resta nel JSON solo come fallback tecnico). Tutto gratis, nessun login, nessun backend. Distribuzione: l'utente ha un Apple Developer account → obiettivo TestFlight da CI (chiave API nei GitHub Secrets, inserita dall'utente). Più telefoni = **installazioni indipendenti**: ogni iPhone ha la propria scheda e i propri dati in locale, nessuna sincronizzazione (non richiesta). Neon/Vercel non servono; se mai servissero vanno usati come servizi separati, mai con l'integrazione Neon dentro Vercel.
 
+## 0. SCOPO SEMPLIFICATO (decisione dell'utente del 2026-09-18 dopo la prima prova su iPhone: PREVALE sul resto del documento)
+
+L'utente vuole **semplicemente un'app dove tenere la propria scheda**, da consultare in palestra. "Troppe opzioni" è un difetto.
+
+**Resta**
+- **Scheda** (seconda tab, gestione): scheda attiva con i suoi giorni; ogni giorno elenca gli esercizi con serie × ripetizioni (o durata), **carico attuale** (un solo valore per esercizio, modificabile al volo con −/+ o digitando; nessuno storico dei carichi), recupero, nota. Toccando un esercizio si apre il suo **dettaglio** (GIF, zone colpite, attrezzo, istruzioni). Editor veloce per ricopiare la scheda dell'istruttore, durata in settimane e scadenza ("Settimana 3 di 6"), archivio delle schede passate, duplica.
+- **Esercizi**: catalogo con ricerca in italiano e filtri per zona colpita/attrezzo, dettaglio con GIF, muscoli, istruzioni, preferiti, esercizi personalizzati. **Quando si sceglie un esercizio da aggiungere alla scheda, il tocco sulla riga apre il DETTAGLIO** (GIF, zone colpite, istruzioni) con il bottone "Aggiungi alla scheda"; la selezione multipla rapida resta possibile con un cerchio di selezione a destra della riga.
+- **Misure**: peso, composizione corporea e circonferenze inseriti a mano, con grafico per metrica e variazione.
+- **Impostazioni**: nome, unità, recupero predefinito, media offline, crediti.
+
+**Schermata del giorno (richiesta esplicita dell'utente, con screenshot)**: resta l'elenco attuale (thumbnail, nome, "4 × 6-8 · 80 kg · 2:30"). **Di default è in CONSULTAZIONE**: toccando un esercizio si apre il suo dettaglio (stessa schermata del catalogo Esercizi: GIF, zone colpite, attrezzo, istruzioni), con in testa il riepilogo della prescrizione della scheda (serie × ripetizioni, carico attuale modificabile al volo, recupero, nota). Un tasto **"Modifica"** in alto (al posto o accanto a "…") attiva la MODALITÀ MODIFICA: compaiono riordino, eliminazione, "Aggiungi esercizi", e il tocco su un esercizio apre l'editor (serie, ripetizioni, carico, recupero…); "Fine" torna alla consultazione. In consultazione non ci sono bottoni primari in basso. Se il giorno è vuoto, l'empty state porta direttamente ad "Aggiungi esercizi".
+
+**Nomi esercizi**: il titolo mostra il nome inglese SENZA il prefisso dell'attrezzo ("Dumbbell Lateral Raise" → "Lateral Raise"); l'attrezzo resta nella sottoriga in italiano ("Deltoidi · Manubri"). La ricerca continua a funzionare sul nome completo e sul gergo italiano.
+
+**Esercizi senza lista infinita (richiesta dell'utente)**: la radice della tab Esercizi mostra la ricerca e l'elenco delle ZONE COLPITE con conteggio (più Preferiti / I miei esercizi / Recenti se non vuoti); tocco su una zona → elenco di quella zona con chip per attrezzo; la ricerca dalla radice cerca in tutto il catalogo (debounce, risultati limitati). Il picker della scheda usa la stessa struttura.
+
+**Tab bar**: sempre visibile, anche nelle pagine interne. **Ritoccare l'icona del tab già selezionato riporta alla schermata iniziale di quella sezione e in cima** (da qualunque profondità). Nessun contenuto o bottone può finire sotto la barra.
+
+**Priorità n.1: FLUIDITÀ.** Ogni scelta di implementazione privilegia 60 fps reali su iPhone: niente blur/materiali animati, niente lavoro pesante sul main thread, liste leggere, animazioni brevi.
+
+**Rimosso dalla UI**: sessione guidata (timer, spunta serie, recupero automatico, riepilogo, RPE, tipi di serie, record, suggerimenti di progressione, sostituisci esercizio), allenamento libero, tab Oggi, storico allenamenti, statistiche di allenamento (volume, costanza, record, serie per gruppo muscolare), progressi per esercizio nel dettaglio, modalità rotazione/giorni fissi (i giorni sono solo un elenco con nome), serie di riscaldamento e superset restano SOLO se costano zero rumore (dentro "Altro" nell'editor), notifiche.
+
+Tab bar, 4 tab in quest'ordine (struttura decisa dall'utente): **Home · Scheda · Esercizi · Misure**. **Home = la scheda attiva completa in sola CONSULTAZIONE** (è la schermata da palestra): in alto nome della scheda e "Settimana 3 di 6", un selettore dei giorni (chip orizzontali: Giorno A, B, C…; ricorda l'ultimo scelto), sotto l'elenco degli esercizi del giorno (thumbnail, nome, "4 × 6-8 · 80 kg · 2:30", nota se presente); tocco su un esercizio → dettaglio (GIF, zone colpite, attrezzo, istruzioni) con in testa il blocco "La tua scheda" e il carico attuale ritoccabile con −/+; nessun controllo di modifica, nessun bottone primario; se non esiste una scheda, empty state che porta alla tab Scheda. **Scheda = gestione e MODIFICA** (crea scheda, giorni, editor del giorno sempre in modalità modifica con riordino/elimina/aggiungi esercizi/editor dell'esercizio, archivio, duplica): qui NON serve il tasto Modifica/Fine, la consultazione sta in Home. **Esercizi** = catalogo per categorie. **Misure** = misure corporee.
+
 ## 1. Vincoli NON negoziabili
 
 1. **Niente Xcode sul Mac.** Sono installate solo le Command Line Tools (Swift 6.2, SDK macOS 26). Non installare Xcode, simulatori o toolchain pesanti.

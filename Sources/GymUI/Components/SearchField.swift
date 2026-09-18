@@ -39,6 +39,10 @@ public struct SearchField: View {
                 .autocorrectionDisabled()
                 .noAutocapitalization()
 
+            // L'animazione è confinata qui: `.animation(value: text.isEmpty)` sul
+            // contenitore animava anche il suo padding, proprio nel fotogramma della
+            // prima battitura (il momento peggiore). Ora la comparsa del bottone
+            // sfuma e il resto del campo si assesta subito.
             if !text.isEmpty {
                 Button {
                     text = ""
@@ -55,6 +59,9 @@ public struct SearchField: View {
                 .transition(.opacity)
             }
         }
+        // Applicata qui, dentro la catena: anima la comparsa del bottone ma non i
+        // padding aggiunti sotto, che si assestano nello stesso fotogramma.
+        .animation(Theme.Motion.smooth, value: text.isEmpty)
         .padding(.leading, Theme.Spacing.l)
         .padding(.trailing, text.isEmpty ? Theme.Spacing.l : Theme.Spacing.xs)
         .frame(height: Theme.Size.primaryButtonHeight - 8)
@@ -63,7 +70,6 @@ public struct SearchField: View {
             Capsule(style: .continuous)
                 .strokeBorder(isFocused ? Theme.textPrimary : .clear, lineWidth: 1.5)
         )
-        .animation(Theme.Motion.smooth, value: text.isEmpty)
         .animation(Theme.Motion.smooth, value: isFocused)
     }
 }

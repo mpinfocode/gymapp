@@ -31,6 +31,16 @@ packages:
 
 # Impostazioni valide per tutto il progetto.
 settings:
+  # Ottimizzazioni ESPLICITE per Release: non ci si affida ai preset impliciti di XcodeGen.
+  # Una Release non ottimizzata è ~20 volte più lenta (misurato sulla ricerca esercizi).
+  configs:
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      SWIFT_COMPILATION_MODE: wholemodule
+      GCC_OPTIMIZATION_LEVEL: s
+      ENABLE_TESTABILITY: NO
+      ENABLE_NS_ASSERTIONS: NO
+      VALIDATE_PRODUCT: YES
   base:
     # Versione marketing fissa; il build number è sovrascritto dalla CI passando
     # CURRENT_PROJECT_VERSION=<n> sulla riga di comando di xcodebuild.

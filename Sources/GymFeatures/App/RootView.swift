@@ -2,7 +2,8 @@ import SwiftUI
 import GymCore
 import GymUI
 
-/// Radice dell'interfaccia: avvio, shell a 4 tab, cover della sessione attiva.
+/// Radice dell'interfaccia: avvio e shell a 4 tab
+/// (**Home · Scheda · Esercizi · Misure**, SPEC §0).
 ///
 /// Convenzione d'ambiente: vedi il commento in testa a `App/AppEnvironment.swift`.
 /// `RootView` costruisce (o riceve) l'``AppEnvironment`` e lo inietta con
@@ -15,11 +16,8 @@ public struct RootView: View {
 
     /// Ambiente iniettato (screenshot/test); `nil` nell'app reale.
     private let provided: AppEnvironment?
-    /// Tab selezionato all'avvio: serve agli screenshot, l'app parte sempre da Oggi.
+    /// Tab selezionato all'avvio: serve agli screenshot, l'app parte sempre da Home.
     private let initialTab: AppTab
-    /// Solo per gli screenshot: parte con la sessione in corso già minimizzata,
-    /// così si vede la barra "Riprendi allenamento" invece della cover.
-    private let sessionMinimized: Bool
 
     @State private var environment: AppEnvironment?
     @State private var bootFailure: String?
@@ -27,15 +25,13 @@ public struct RootView: View {
     /// Avvio reale: crea l'ambiente di default e carica i dati.
     public init() {
         self.provided = nil
-        self.initialTab = .today
-        self.sessionMinimized = false
+        self.initialTab = .home
     }
 
     /// Avvio con dipendenze iniettate (usato da `GymSnapshots`).
-    public init(environment: AppEnvironment, initialTab: AppTab = .today, sessionMinimized: Bool = false) {
+    public init(environment: AppEnvironment, initialTab: AppTab = .home) {
         self.provided = environment
         self.initialTab = initialTab
-        self.sessionMinimized = sessionMinimized
     }
 
     public var body: some View {
@@ -76,7 +72,6 @@ public struct RootView: View {
             if provided.phase == .loading { await provided.start() }
             environment = provided
             provided.router.tab = initialTab
-            if sessionMinimized { provided.router.minimizeSession() }
             return
         }
         do {
@@ -140,8 +135,8 @@ private struct LaunchView: View {
     }
 }
 
-/// Shell a tab: quattro `NavigationStack`, tab bar flottante, barra "Riprendi
-/// allenamento" e cover a schermo intero della sessione in corso.
+/// Shell a tab: quattro `NavigationStack`, tab bar flottante **sempre visibile** e
+/// foglio delle Impostazioni.
 private struct AppShell: View {
 
     @Environment(AppEnvironment.self) private var app
@@ -151,22 +146,30 @@ private struct AppShell: View {
         @Bindable var router = app.router
 
         ZStack {
-            PageBackground()
-
             // I quattro stack restano tutti nella gerarchia: così il tab conserva
-            // il proprio stato (path, ricerca, scroll) quando si cambia tab.
-            tabStack(.today, path: $router.todayPath) { TodayScreen() }
-            tabStack(.exercises, path: $router.exercisesPath) { ExercisesScreen() }
+            // il proprio stato (path, ricerca, posizione di scroll) quando si
+            // cambia tab. Smontarli sarebbe più economico ma SwiftUI non sa
+            // ripristinare l'offset di scroll di una gerarchia distrutta: si
+            // tornerebbe in cima a ogni giro di tab. Il lavoro inutile dei tab
+            // nascosti si elimina invece mettendoli in pausa (vedi `tabStack`).
+            tabStack(.home, path: $router.homePath) { HomeScreen() }
             tabStack(.program, path: $router.programPath) { ProgramScreen() }
-            tabStack(.progress, path: $router.progressPath) { ProgressScreen() }
+            tabStack(.exercises, path: $router.exercisesPath) { ExercisesScreen() }
+            tabStack(.measures, path: $router.measuresPath) { MeasuresScreen() }
         }
-        .safeAreaInset(edge: .bottom) { bottomBar }
-        .sessionCover(isPresented: sessionCoverBinding) {
-            ActiveSessionScreen(onMinimize: { app.router.minimizeSession() })
-        }
-        .onChange(of: app.store.activeSession?.id) { _, _ in
-            // Una sessione appena avviata (o chiusa) riparte sempre non minimizzata.
-            app.router.resumeSession()
+        // Lo sfondo sta dietro, non dentro lo stack: un figlio con
+        // `ignoresSafeArea` in uno ZStack può far crescere il contenitore e
+        // spingere il contenuto sotto la safe area.
+        .background(PageBackground())
+        // La barra è disegnata SOPRA gli stack, non come loro inset: lo spazio se
+        // lo prende ogni stack con `tabBarSafeArea()`, che vale anche per le
+        // pagine spinte (vedi il commento del modificatore).
+        .overlay(alignment: .bottom) { tabBar }
+        // Le Impostazioni sono un foglio della shell: qualunque schermata le apre
+        // con `app.router.presentSettings()`.
+        .sheet(isPresented: $router.isPresentingSettings) {
+            SettingsScreen()
+                .environment(app)
         }
         .onChange(of: app.store.settings.hapticsEnabled, initial: true) { _, enabled in
             Haptics.isEnabled = enabled
@@ -190,81 +193,81 @@ private struct AppShell: View {
         NavigationStack(path: path) {
             content()
                 .navigationDestination(for: AppRoute.self) { route in
-                    switch route {
-                    case .exercise(let id): ExerciseDetailScreen(exerciseID: id)
-                    case .session(let id): SessionDetailScreen(sessionID: id)
-                    }
+                    destination(route)
                 }
         }
+        // Lo spazio della tab bar si riserva QUI, fuori dal `NavigationStack`: la
+        // safe area ridotta vale così anche per le pagine spinte e per i loro
+        // `safeAreaInset(edge: .bottom)`, che finiscono sopra la barra invece che
+        // sotto. Applicarlo dentro le singole schermate lo farebbe dimenticare
+        // proprio alla prima pagina spinta con un bottone ancorato in basso.
+        .tabBarSafeArea()
         .opacity(isSelected ? 1 : 0)
         .allowsHitTesting(isSelected)
         .accessibilityHidden(!isSelected)
         .zIndex(isSelected ? 1 : 0)
+        // Un tab nascosto resta montato ma non deve lavorare: gradienti e GIF
+        // si fermano finché non torna visibile.
+        .blobAnimationPaused(!isSelected)
+        // Il cambio di tab è **istantaneo**: nessuna dissolvenza fra due
+        // schermate intere. La pillola della tab bar si sposta comunque con la
+        // sua animazione breve, perché è fuori da questo sottoalbero.
+        .animation(nil, value: app.router.tab)
     }
 
-    // MARK: - Barre in basso
-
-    private var bottomBar: some View {
-        @Bindable var router = app.router
-
-        return VStack(spacing: Theme.Spacing.s) {
-            if app.store.activeSession != nil, app.router.isSessionMinimized {
-                resumeBar
-            }
-            FloatingTabBar(items: AppTab.tabItems, selection: $router.tab)
+    /// Le pagine spinte, tutte in un punto solo.
+    @ViewBuilder
+    private func destination(_ route: AppRoute) -> some View {
+        switch route {
+        case .exercise(let id): ExerciseDetailScreen(exerciseID: id)
+        case .programDay(let programID, let dayID): ProgramDayEditor(programID: programID, dayID: dayID)
+        case .programArchive: ProgramArchiveScreen()
+        case .bodyMetric(let metric): BodyMetricDetailScreen(metric: metric)
         }
-        .padding(.horizontal, Theme.Spacing.page)
-        .padding(.bottom, Theme.Spacing.s)
     }
 
-    private var resumeBar: some View {
-        Button {
-            app.router.resumeSession()
-        } label: {
-            HStack(spacing: Theme.Spacing.m) {
-                Text("Riprendi allenamento")
-                    .font(.bodyEmphasis)
-                Spacer(minLength: Theme.Spacing.s)
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 13, weight: .semibold))
-            }
-            .foregroundStyle(Theme.onInk)
-            .padding(.horizontal, Theme.Spacing.xl)
-            .frame(height: 48)
-            .frame(maxWidth: .infinity)
-            .background(Theme.ink, in: Capsule(style: .continuous))
-        }
-        .buttonStyle(PressableButtonStyle())
-        .accessibilityLabel(Text("Riprendi allenamento"))
+    // MARK: - Tab bar
+
+    /// Sempre visibile, anche nelle pagine spinte: è l'unico modo per ritoccare
+    /// l'icona di un tab e tornare alla sua radice da qualunque profondità.
+    private var tabBar: some View {
+        FloatingTabBar(items: AppTab.tabItems, selection: tabSelection)
+            .padding(.horizontal, Theme.Spacing.page)
+            .padding(.bottom, FloatingTabBarMetrics.bottomMargin)
     }
 
-    // MARK: - Cover della sessione
-
-    /// La cover è aperta quando c'è una sessione in corso e non è stata minimizzata.
-    /// Chiuderla non termina la sessione: la minimizza e fa comparire la barra sopra la tab bar.
-    private var sessionCoverBinding: Binding<Bool> {
+    /// Il tab si cambia senza animare il contenuto (vedi `tabStack`).
+    ///
+    /// Il **ritocco** di un tab già selezionato passa da ``Router/reselect(_:)``:
+    /// torna alla radice della sezione oppure, se è già alla radice, chiede alla
+    /// schermata di scorrere in cima.
+    private var tabSelection: Binding<AppTab> {
         Binding(
-            get: { app.store.activeSession != nil && !app.router.isSessionMinimized },
-            set: { isOpen in if !isOpen { app.router.minimizeSession() } }
+            get: { app.router.tab },
+            set: { newValue in
+                guard newValue != app.router.tab else {
+                    app.router.reselect(newValue)
+                    return
+                }
+                app.router.tab = newValue
+            }
         )
     }
 }
 
 private extension View {
 
-    /// Cover a schermo intero della sessione.
+    /// Riserva in fondo lo spazio della tab bar flottante.
     ///
-    /// `fullScreenCover` esiste solo su iOS: su macOS (dove si compila e si fanno
-    /// gli screenshot) ricade su `sheet`, che ha la stessa semantica di binding.
-    @ViewBuilder
-    func sessionCover<Content: View>(
-        isPresented: Binding<Bool>,
-        @ViewBuilder content: @escaping () -> Content
-    ) -> some View {
-        #if os(iOS)
-        self.fullScreenCover(isPresented: isPresented, content: content)
-        #else
-        self.sheet(isPresented: isPresented, content: content)
-        #endif
+    /// Va applicato **fuori** dal `NavigationStack` di un tab: la safe area ridotta
+    /// si propaga così a tutte le pagine spinte, ai loro `safeAreaInset` e alle
+    /// liste. Applicarlo una seconda volta dentro una pagina raddoppierebbe lo
+    /// spazio: se serve altrove, si usa questo stesso modificatore e mai un
+    /// `padding` a mano.
+    func tabBarSafeArea() -> some View {
+        safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear
+                .frame(height: FloatingTabBarMetrics.reservedHeight)
+        }
     }
 }

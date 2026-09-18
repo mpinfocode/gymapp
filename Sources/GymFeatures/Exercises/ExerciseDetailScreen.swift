@@ -2,18 +2,49 @@ import SwiftUI
 import GymCore
 import GymUI
 
-/// Dettaglio di un esercizio: movimento, muscoli, istruzioni, progressi personali
-/// e "Aggiungi alla scheda" (SPEC §5.2).
+/// La voce della scheda da cui si è aperto il dettaglio: giorno e riga.
+///
+/// Serve al blocco "La tua scheda" in testa al dettaglio; senza contesto il
+/// dettaglio è quello del catalogo e non mostra nessuna prescrizione.
+public struct PlanItemContext: Hashable, Sendable, Identifiable {
+    public let programID: UUID
+    public let dayID: UUID
+    public let itemID: UUID
+
+    public var id: UUID { itemID }
+
+    public init(programID: UUID, dayID: UUID, itemID: UUID) {
+        self.programID = programID
+        self.dayID = dayID
+        self.itemID = itemID
+    }
+}
+
+/// Da dove si è aperto il dettaglio: cambia soltanto la testa della pagina e il
+/// bottone primario, il resto (GIF, muscoli, istruzioni) è sempre lo stesso.
+public enum ExerciseDetailPurpose {
+    /// Catalogo: bottone "Aggiungi alla scheda" con scelta del giorno.
+    case catalog
+    /// Aperto da un giorno della scheda: in testa la prescrizione, con il carico
+    /// attuale ritoccabile. Nessun bottone primario.
+    case plan(PlanItemContext)
+    /// Aperto dentro il picker: si guarda la GIF e si conferma con un bottone.
+    case picking(isAdded: Bool, add: () -> Void)
+}
+
+/// Dettaglio di un esercizio: GIF, zone colpite, attrezzo, preferito, istruzioni
+/// (SPEC §5.2). Niente progressi né storico: l'app non registra più le sessioni.
 ///
 /// Riceve solo l'id e lo risolve con `app.store.exercise(id:)`, che unisce libreria
-/// ed esercizi personalizzati: così la schermata regge anche un id che arriva dallo
-/// storico e non esiste più in libreria.
+/// ed esercizi personalizzati: così la schermata regge anche un id che arriva da una
+/// scheda vecchia e non esiste più in libreria.
 public struct ExerciseDetailScreen: View {
 
     @Environment(AppEnvironment.self) private var app
     @Environment(\.dismiss) private var dismiss
 
     private let exerciseID: String
+    private let purpose: ExerciseDetailPurpose
 
     @State private var isAddingToProgram = false
     @State private var isEditing = false
@@ -21,7 +52,12 @@ public struct ExerciseDetailScreen: View {
     @State private var keptInHistory = false
 
     public init(exerciseID: String) {
+        self.init(exerciseID: exerciseID, purpose: .catalog)
+    }
+
+    public init(exerciseID: String, purpose: ExerciseDetailPurpose) {
         self.exerciseID = exerciseID
+        self.purpose = purpose
     }
 
     public var body: some View {
@@ -51,7 +87,7 @@ public struct ExerciseDetailScreen: View {
             Button("Elimina", role: .destructive, action: delete)
             Button("Annulla", role: .cancel) {}
         } message: {
-            Text("Se è già stato usato resta nello storico e nelle schede, ma sparisce dalla ricerca.")
+            Text("Se è già stato usato resta nelle schede, ma sparisce dalla ricerca.")
         }
     }
 
@@ -61,25 +97,29 @@ public struct ExerciseDetailScreen: View {
     private func content(_ exercise: Exercise) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
+                if case .picking = purpose {
+                    backBar
+                }
+
+                // Aperto da un giorno della scheda: la prescrizione sta in testa,
+                // è la ragione per cui si è aperta la pagina in palestra.
+                if case .plan(let context) = purpose {
+                    PlanPrescriptionCard(context: context)
+                }
+
                 media(exercise)
                 identity(exercise)
 
                 if keptInHistory {
-                    Text("Eliminato. Resta nello storico e nelle schede che lo usano.")
+                    Text("Eliminato. Resta nelle schede che lo usano.")
                         .captionStyle(color: Theme.textTertiary)
                 }
 
-                if canAddToProgram {
-                    PrimaryButton("Aggiungi alla scheda", systemImage: "plus") {
-                        isAddingToProgram = true
-                    }
-                }
+                primaryAction
 
                 if !exercise.notes.isEmpty {
                     note(exercise.notes)
                 }
-
-                ExerciseProgressSection(exerciseID: exercise.id)
 
                 if !exercise.steps.isEmpty {
                     steps(exercise.steps)
@@ -95,6 +135,15 @@ public struct ExerciseDetailScreen: View {
             .padding(.top, Theme.Spacing.s)
             .padding(.bottom, Theme.Spacing.xxxl)
         }
+    }
+
+    /// Nel picker il dettaglio è una sheet: serve una via d'uscita esplicita.
+    private var backBar: some View {
+        Button("Indietro") { dismiss() }
+            .font(.bodyText)
+            .foregroundStyle(Theme.textSecondary)
+            .buttonStyle(.plain)
+            .frame(minHeight: Theme.Size.minTapTarget, alignment: .leading)
     }
 
     // MARK: - Movimento
@@ -119,7 +168,7 @@ public struct ExerciseDetailScreen: View {
                 AnimatedGIFView(
                     url: exercise.gifURL,
                     side: Theme.Size.maxMediaSide,
-                    accessibilityTitle: "Esecuzione di \(exercise.displayName)"
+                    accessibilityTitle: "Esecuzione di \(exercise.shortDisplayName)"
                 )
             }
             Spacer(minLength: 0)
@@ -127,7 +176,7 @@ public struct ExerciseDetailScreen: View {
     }
 
     private func initial(of exercise: Exercise) -> String {
-        String(exercise.displayName.prefix(1)).uppercased()
+        String(exercise.shortDisplayName.prefix(1)).uppercased()
     }
 
     // MARK: - Nome, muscoli, azioni
@@ -136,7 +185,7 @@ public struct ExerciseDetailScreen: View {
         VStack(alignment: .leading, spacing: Theme.Spacing.s) {
             HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.m) {
                 VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                    Text(exercise.displayName)
+                    Text(exercise.shortDisplayName)
                         .sectionTitleStyle()
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.isHeader)
@@ -197,6 +246,33 @@ public struct ExerciseDetailScreen: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .accessibilityLabel(Text("Azioni sull'esercizio"))
+    }
+
+    // MARK: - Azione principale
+
+    @ViewBuilder
+    private var primaryAction: some View {
+        switch purpose {
+        case .catalog:
+            if canAddToProgram {
+                PrimaryButton("Aggiungi alla scheda", systemImage: "plus") {
+                    isAddingToProgram = true
+                }
+            }
+        case .picking(let isAdded, let add):
+            if isAdded {
+                PrimaryButton("Già nella scheda") {}
+                    .disabled(true)
+                    .opacity(0.4)
+            } else {
+                PrimaryButton("Aggiungi alla scheda", systemImage: "plus") {
+                    add()
+                    dismiss()
+                }
+            }
+        case .plan:
+            EmptyView()
+        }
     }
 
     // MARK: - Nota e istruzioni

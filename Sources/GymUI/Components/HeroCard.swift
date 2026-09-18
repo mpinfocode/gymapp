@@ -38,15 +38,23 @@ public struct HeroCard<Content: View>: View {
     public var body: some View {
         let palette = BlobPalette.palette(for: seed)
         ZStack(alignment: .topLeading) {
-            BlobGradient(seed: seed, animated: animated)
+            // Un solo ritaglio, e solo sul fondo: il gradiente non si ritaglia da sé
+            // (lo farebbe a ogni fotogramma del respiro) e il contenuto, che vive
+            // ben dentro i margini, non ha bisogno di essere ritagliato.
+            ZStack {
+                BlobGradient(seed: seed, animated: animated, clipsToBounds: false)
 
-            // Velo in basso: garantisce il contrasto del testo sul gradiente,
-            // chiaro sul tema chiaro e scuro sul tema scuro.
-            LinearGradient(
-                colors: [.clear, palette.scrim],
-                startPoint: .center,
-                endPoint: .bottom
-            )
+                // Velo in basso: garantisce il contrasto del testo sul gradiente,
+                // chiaro sul tema chiaro e scuro sul tema scuro.
+                LinearGradient(
+                    colors: [.clear, palette.scrim],
+                    startPoint: .center,
+                    endPoint: .bottom
+                )
+            }
+            .frame(height: height)
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous))
             .allowsHitTesting(false)
 
             if let chipText {
@@ -62,6 +70,6 @@ public struct HeroCard<Content: View>: View {
         }
         .frame(height: height)
         .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous))
     }
 }

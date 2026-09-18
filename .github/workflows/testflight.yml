@@ -272,6 +272,16 @@ jobs:
       - name: Genera GymApp.xcodeproj
         run: xcodegen generate --spec project.yml
 
+      # La Release DEVE essere ottimizzata: senza -O l'app è ~20 volte più lenta.
+      - name: Verifica ottimizzazioni Release
+        run: |
+          set -euo pipefail
+          IMPOSTAZIONI="$(xcodebuild -showBuildSettings -project GymApp.xcodeproj -scheme Gym -configuration Release 2>/dev/null)"
+          printf '%s\n' "$IMPOSTAZIONI" | grep -E ' (SWIFT_OPTIMIZATION_LEVEL|SWIFT_COMPILATION_MODE|ENABLE_TESTABILITY) = ' || true
+          printf '%s\n' "$IMPOSTAZIONI" | grep -q ' SWIFT_OPTIMIZATION_LEVEL = -O$' || { echo "::error::Release senza -O"; exit 1; }
+          printf '%s\n' "$IMPOSTAZIONI" | grep -q ' SWIFT_COMPILATION_MODE = wholemodule$' || { echo "::error::Release senza whole module"; exit 1; }
+          printf '%s\n' "$IMPOSTAZIONI" | grep -q ' ENABLE_TESTABILITY = NO$' || { echo "::error::ENABLE_TESTABILITY attivo in Release"; exit 1; }
+
       - name: Risolvi il package locale
         run: |
           set -euo pipefail

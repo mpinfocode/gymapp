@@ -130,68 +130,142 @@ public struct BlobPalette: Sendable, Hashable, Identifiable {
     ]
 }
 
-/// Gradiente organico sfocato generato da un seed: tre macchie di colore che
-/// "respirano" molto lentamente (≤ 0.1 Hz) sopra un fondo scuro.
+/// Gradiente organico generato da un seed: tre macchie di colore morbide che
+/// "respirano" molto lentamente (≤ 0.1 Hz) sopra un fondo tinto.
 ///
 /// Lo stesso seed produce sempre lo stesso gradiente: è l'identità visiva di una scheda
 /// in Home, in Schede e nella sessione attiva.
+///
+/// ## Costo
+/// Le macchie sono `RadialGradient` che sfumano fino a trasparente: la morbidezza è
+/// nel gradiente stesso, **senza `.blur`** e senza `TimelineView`. Il respiro è una
+/// sola animazione implicita `repeatForever` su `offset`/`scaleEffect`, quindi la
+/// interpola Core Animation: il `body` non viene rivalutato a ogni fotogramma.
+/// L'animazione si ferma davvero quando la view scompare, quando la scena va in
+/// background, con "Riduci movimento" e quando l'ambiente la mette in pausa
+/// (``SwiftUI/View/blobAnimationPaused(_:)``: la shell la usa per i tab nascosti,
+/// che in SwiftUI restano montati).
 public struct BlobGradient: View {
 
     private let seed: Int
     private let intensity: Double
     private let animated: Bool
+    private let clipsToBounds: Bool
+
+    @State private var isOnScreen = false
+    @State private var breathing = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.blobAnimationPaused) private var pausedByEnvironment
+    @Environment(\.scenePhase) private var scenePhase
 
     /// - Parameters:
     ///   - seed: intero che identifica la scheda; determina palette e fasi.
     ///   - intensity: opacità complessiva delle macchie (0...1).
     ///   - animated: se `false` il gradiente resta immobile (usare per liste lunghe).
-    public init(seed: Int, intensity: Double = 1, animated: Bool = true) {
+    ///   - clipsToBounds: ritaglia le macchie al proprio riquadro. Passare `false`
+    ///     quando il chiamante ritaglia già (``HeroCard``): due ritagli annidati su
+    ///     contenuto animato sono due passaggi fuori schermo per fotogramma.
+    public init(seed: Int, intensity: Double = 1, animated: Bool = true, clipsToBounds: Bool = true) {
         self.seed = seed
         self.intensity = intensity
         self.animated = animated
+        self.clipsToBounds = clipsToBounds
     }
 
     /// Palette risolta dal seed, utile a chi deve scegliere il colore del testo sopra.
     public var palette: BlobPalette { BlobPalette.palette(for: seed) }
 
+    /// Il respiro è attivo solo se serve davvero: view sullo schermo, scena in primo
+    /// piano, nessuna pausa dall'ambiente, nessun "Riduci movimento".
+    private var moving: Bool {
+        animated
+            && !reduceMotion
+            && !pausedByEnvironment
+            && isOnScreen
+            && scenePhase != .background
+    }
+
     public var body: some View {
         let palette = self.palette
         let phases = Self.phases(for: seed)
-        let moving = animated && !reduceMotion
 
         GeometryReader { geo in
-            let side = max(geo.size.width, geo.size.height)
-            TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !moving)) { context in
-                let time = moving ? context.date.timeIntervalSinceReferenceDate : 0
-                ZStack {
-                    LinearGradient(
-                        colors: [palette.base, palette.baseEnd],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    ForEach(Array(palette.blobs.enumerated()), id: \.offset) { index, color in
-                        let phase = phases[index]
-                        let angle = (time / Theme.Motion.breathPeriod) * 2 * .pi + phase.start
-                        let diameter = side * phase.scale
-                        Circle()
-                            .fill(color)
-                            .frame(width: diameter, height: diameter)
-                            .offset(
-                                x: geo.size.width * (phase.centerX - 0.5) + CGFloat(cos(angle)) * side * phase.travel,
-                                y: geo.size.height * (phase.centerY - 0.5) + CGFloat(sin(angle * 0.7)) * side * phase.travel
-                            )
-                            .blur(radius: side * 0.22)
-                            .opacity(0.78 * intensity)
-                    }
+            let side = max(geo.size.width, geo.size.height, 1)
+            ZStack {
+                LinearGradient(
+                    colors: [palette.base, palette.baseEnd],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                ForEach(Array(palette.blobs.enumerated()), id: \.offset) { index, color in
+                    blob(color, phase: phases[index], side: side, size: geo.size)
                 }
-                .frame(width: geo.size.width, height: geo.size.height)
             }
-            .compositingGroup()
-            .clipped()
+            .frame(width: geo.size.width, height: geo.size.height)
+            .modifier(OptionalClip(isActive: clipsToBounds))
+        }
+        .onAppear { isOnScreen = true }
+        .onDisappear { isOnScreen = false }
+        .onChange(of: moving, initial: true) { _, isMoving in
+            breathing = isMoving
         }
         .accessibilityHidden(true)
+    }
+
+    /// Una macchia: cerchio riempito da un gradiente radiale che sfuma a trasparente.
+    /// Si muove di pochi punti su una diagonale e respira di scala: entrambe le
+    /// proprietà sono trasformazioni di layer, non ridisegni.
+    @ViewBuilder
+    private func blob(_ color: Color, phase: Phase, side: CGFloat, size: CGSize) -> some View {
+        // La tinta è piena fino a ~0.62 del raggio e poi sfuma a trasparente: il
+        // diametro è tarato (a occhio, confrontando gli snapshot) perché la macchia
+        // copra la stessa area del vecchio cerchio pieno + `.blur(side * 0.22)`.
+        let diameter = side * phase.scale * 0.94
+        let restX = size.width * (phase.centerX - 0.5)
+        let restY = size.height * (phase.centerY - 0.5)
+        let travel = side * phase.travel
+
+        Circle()
+            .fill(
+                RadialGradient(
+                    gradient: Gradient(stops: Self.softStops(color, intensity: intensity)),
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: diameter / 2
+                )
+            )
+            .frame(width: diameter, height: diameter)
+            .scaleEffect(breathing ? 1.06 : 0.97)
+            .offset(
+                x: restX + (breathing ? travel : -travel) * phase.driftX,
+                y: restY + (breathing ? -travel : travel) * phase.driftY
+            )
+            .animation(breathAnimation(phase: phase), value: breathing)
+    }
+
+    /// Respiro lentissimo e sfasato per macchia, così le tre non si muovono all'unisono.
+    private func breathAnimation(phase: Phase) -> Animation? {
+        guard moving else { return nil }
+        return .easeInOut(duration: Theme.Motion.breathPeriod * phase.durationFactor)
+            .repeatForever(autoreverses: true)
+            .delay(Theme.Motion.breathPeriod * phase.delayFactor)
+    }
+
+    /// Stop scelti per imitare la caduta morbida di una sfocatura gaussiana:
+    /// pieno al centro, quasi metà a mezza via, nullo sul bordo. Niente banding
+    /// perché la transizione non ha mai un salto secco.
+    private static func softStops(_ color: Color, intensity: Double) -> [Gradient.Stop] {
+        let peak = 0.86 * max(min(intensity, 1), 0)
+        return [
+            Gradient.Stop(color: color.opacity(peak), location: 0),
+            Gradient.Stop(color: color.opacity(peak * 0.99), location: 0.62),
+            Gradient.Stop(color: color.opacity(peak * 0.86), location: 0.73),
+            Gradient.Stop(color: color.opacity(peak * 0.56), location: 0.83),
+            Gradient.Stop(color: color.opacity(peak * 0.26), location: 0.91),
+            Gradient.Stop(color: color.opacity(peak * 0.07), location: 0.97),
+            Gradient.Stop(color: color.opacity(0), location: 1),
+        ]
     }
 
     // MARK: - Generazione deterministica
@@ -201,7 +275,10 @@ public struct BlobGradient: View {
         let centerY: Double
         let scale: Double
         let travel: Double
-        let start: Double
+        let driftX: Double
+        let driftY: Double
+        let durationFactor: Double
+        let delayFactor: Double
     }
 
     /// Generatore lineare congruenziale deterministico: stesso seed → stesse macchie.
@@ -212,13 +289,64 @@ public struct BlobGradient: View {
             return Double((state >> 33) % 10_000) / 10_000
         }
         return (0..<3).map { index in
-            Phase(
-                centerX: 0.15 + next() * 0.7,
-                centerY: 0.12 + next() * 0.76,
-                scale: [0.95, 0.78, 0.62][index] + next() * 0.15,
-                travel: 0.035 + next() * 0.045,
-                start: next() * 2 * .pi
+            let centerX = 0.15 + next() * 0.7
+            let centerY = 0.12 + next() * 0.76
+            let scale = [0.95, 0.78, 0.62][index] + next() * 0.15
+            let travel = 0.035 + next() * 0.045
+            let angle = next() * 2 * .pi
+            return Phase(
+                centerX: centerX,
+                centerY: centerY,
+                scale: scale,
+                travel: travel,
+                driftX: cos(angle),
+                driftY: sin(angle),
+                durationFactor: 0.8 + Double(index) * 0.25,
+                delayFactor: Double(index) * 0.17
             )
         }
+    }
+}
+
+/// Ritaglio opzionale: evita il `.clipped()` quando a ritagliare è già il chiamante.
+private struct OptionalClip: ViewModifier {
+    let isActive: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isActive {
+            content.clipped()
+        } else {
+            content
+        }
+    }
+}
+
+// MARK: - Pausa dall'esterno
+
+private struct BlobAnimationPausedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+
+    /// Quando è `true`, le animazioni ambientali di GymUI (il respiro di
+    /// ``BlobGradient`` e le GIF di ``AnimatedGIFView``) restano ferme.
+    public var blobAnimationPaused: Bool {
+        get { self[BlobAnimationPausedKey.self] }
+        set { self[BlobAnimationPausedKey.self] = newValue }
+    }
+}
+
+extension View {
+
+    /// Mette in pausa le animazioni ambientali di GymUI in questo sottoalbero.
+    ///
+    /// Serve alla shell: i tab non selezionati restano montati (sono nascosti con
+    /// `opacity(0)`), quindi `onDisappear` non scatta e i gradienti continuerebbero
+    /// a respirare fuori dallo schermo. La shell applica
+    /// `.blobAnimationPaused(tab != router.tab)` a ogni tab.
+    public func blobAnimationPaused(_ paused: Bool = true) -> some View {
+        environment(\.blobAnimationPaused, paused)
     }
 }

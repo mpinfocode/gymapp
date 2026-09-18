@@ -2,17 +2,19 @@ import SwiftUI
 import GymCore
 import GymUI
 
-/// Tab **Esercizi**: ricerca, chip della zona colpita con i conteggi, lista con
-/// thumbnail (SPEC §5.2).
+/// Tab **Esercizi**: la radice è la ricerca più l'elenco delle zone colpite, non una
+/// lista da 1.324 righe (SPEC §0, "Esercizi senza lista infinita").
 ///
-/// Ricerca, chip e filtri vivono in ``ExerciseBrowser``, che è lo stesso
-/// componente usato dal picker: qui si aggiungono solo il titolo e i link al
-/// dettaglio (`AppRoute.exercise(id:)`, destinazione già installata da `RootView`).
+/// Ricerca e zone vivono in ``ExerciseLibraryRoot``, lo stesso componente usato dal
+/// picker della scheda: qui si aggiungono solo il titolo, il link al dettaglio
+/// (`AppRoute.exercise(id:)`, destinazione installata da `RootView`) e la pagina
+/// della zona.
 public struct ExercisesScreen: View {
 
     @Environment(AppEnvironment.self) private var app
 
     @State private var model: ExerciseSearchModel
+    @State private var openedSection: ExerciseSection?
     @State private var isCreatingCustom = false
     @State private var prefilledName = ""
 
@@ -20,15 +22,23 @@ public struct ExercisesScreen: View {
         _model = State(initialValue: ExerciseSearchModel())
     }
 
-    /// Init con ricerca e filtri già impostati: la usano gli screenshot per
-    /// fotografare la schermata in uno stato preciso.
+    /// Init con ricerca già impostata: la usano gli screenshot per fotografare la
+    /// schermata in uno stato preciso.
     public init(preset: ExerciseSearchModel) {
         _model = State(initialValue: preset)
     }
 
+    /// Init con una zona già aperta, sempre per gli screenshot.
+    public init(section: ExerciseSection) {
+        _model = State(initialValue: ExerciseSearchModel())
+        _openedSection = State(initialValue: section)
+    }
+
     public var body: some View {
-        ExerciseBrowser(
+        ExerciseLibraryRoot(
             model: $model,
+            scrollTopTab: .exercises,
+            onOpen: { openedSection = $0 },
             onCreateCustom: { name in
                 prefilledName = name
                 isCreatingCustom = true
@@ -46,6 +56,11 @@ public struct ExercisesScreen: View {
             }
         )
         .pageBackground()
+        // La pagina della zona è navigazione **locale**: non serve una rotta
+        // condivisa e la shell resta intatta.
+        .navigationDestination(item: $openedSection) { section in
+            ExerciseGroupScreen(section: section)
+        }
         .sheet(isPresented: $isCreatingCustom) {
             CustomExerciseFormSheet(prefilledName: prefilledName) { created in
                 model.query = created.displayName
@@ -61,7 +76,7 @@ public struct ExercisesScreen: View {
 
             Spacer(minLength: Theme.Spacing.s)
 
-            // Stesso trattamento del bottone filtri: cerchio `surface` da 44pt.
+            // Stesso trattamento del resto della testata: cerchio `surface` da 44pt.
             // Creare un esercizio è un'azione rara, non merita una capsula ink.
             Button {
                 prefilledName = ""
@@ -76,5 +91,43 @@ public struct ExercisesScreen: View {
             .buttonStyle(PressableButtonStyle())
             .accessibilityLabel(Text("Nuovo esercizio personalizzato"))
         }
+    }
+}
+
+/// Gli esercizi di una zona colpita (o dei preferiti, o i propri), con i chip per
+/// attrezzo. Ci si arriva dalla radice di Esercizi.
+public struct ExerciseGroupScreen: View {
+
+    private let section: ExerciseSection
+
+    @State private var equipment: Set<String> = []
+
+    public init(section: ExerciseSection) {
+        self.section = section
+    }
+
+    public var body: some View {
+        ExerciseGroupList(
+            section: section,
+            equipment: $equipment,
+            header: {
+                Text(section.title)
+                    .greetingStyle()
+                    .accessibilityAddTraits(.isHeader)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            },
+            row: { exercise in
+                NavigationLink(value: AppRoute.exercise(id: exercise.id)) {
+                    ExerciseRowView(exercise: exercise) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(.footnote, weight: .semibold))
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        )
+        .pageBackground()
+        .navigationBarTitleDisplayModeInline()
     }
 }

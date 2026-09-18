@@ -2,11 +2,12 @@ import SwiftUI
 import GymCore
 import GymUI
 
-/// Creazione di una scheda e modifica dei suoi dettagli: un passo solo, cinque
+/// Creazione di una scheda e modifica dei suoi dettagli: un passo solo, quattro
 /// domande, un bottone.
 ///
 /// L'inserimento deve essere velocissimo: ogni campo ha già il valore giusto nel
-/// 90% dei casi (nome con il mese, inizio oggi, 6 settimane, a rotazione, 3 giorni).
+/// 90% dei casi (nome con il mese, inizio oggi, 6 settimane, 3 giorni). La modalità
+/// rotazione / giorni fissi è sparita dalla UI: i giorni sono un elenco (SPEC §0).
 ///
 /// È `public` solo perché la scena di screenshot `scheda-nuova` la rende da sola:
 /// dentro l'app la apre soltanto ``ProgramScreen``.
@@ -36,7 +37,6 @@ public struct ProgramFormSheet: View {
     @State private var startDate: Date?
     @State private var hasDeadline = true
     @State private var weeks = 6
-    @State private var programMode: ProgramMode = .rotation
     @State private var dayCount = 3
     @State private var confirmsReplacement = false
     @FocusState private var nameFocused: Bool
@@ -52,7 +52,6 @@ public struct ProgramFormSheet: View {
                 nameField
                 startField
                 durationField
-                modeField
                 if case .create = mode { daysField }
                 submit
             }
@@ -157,22 +156,6 @@ public struct ProgramFormSheet: View {
         }
     }
 
-    private var modeField: some View {
-        field("Modalità") {
-            VStack(alignment: .leading, spacing: Theme.Spacing.s) {
-                CapsuleSegmentedControl(
-                    values: ProgramMode.allCases,
-                    selection: $programMode,
-                    title: \.displayName
-                )
-                Text(programMode.explanation)
-                    .font(.captionText)
-                    .foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
     private var daysField: some View {
         field("Giorni") {
             VStack(alignment: .leading, spacing: Theme.Spacing.s) {
@@ -238,7 +221,6 @@ public struct ProgramFormSheet: View {
             startDate = program.startDate
             hasDeadline = (program.plannedWeeks ?? 0) > 0
             weeks = min(max(program.plannedWeeks ?? 6, 1), 16)
-            programMode = program.mode
         } else {
             name = ProgramPresentation.defaultProgramName(now: app.now, calendar: app.calendar)
             startDate = app.now
@@ -257,7 +239,6 @@ public struct ProgramFormSheet: View {
             name: cleanName,
             startDate: startDate ?? app.now,
             plannedWeeks: hasDeadline ? weeks : nil,
-            mode: programMode,
             activate: true
         )
         for index in 0..<dayCount {
@@ -271,12 +252,10 @@ public struct ProgramFormSheet: View {
         let start = startDate ?? app.now
         let planned = hasDeadline ? weeks : nil
         let newName = cleanName
-        let newMode = programMode
         app.store.editProgram(id: id) { program in
             program.name = newName
             program.startDate = start
             program.plannedWeeks = planned
-            program.mode = newMode
         }
         dismiss()
     }

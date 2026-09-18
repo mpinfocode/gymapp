@@ -1,7 +1,7 @@
 import Foundation
 import GymCore
 
-/// Finestra temporale dei grafici grandi di Progressi (SPEC §5.5).
+/// Finestra temporale dei grafici della tab Misure.
 enum ChartRange: String, CaseIterable, Hashable, Identifiable, Sendable {
     case month1
     case month3
@@ -51,36 +51,6 @@ extension String {
     /// di `capitalized` che maiuscolerebbe ogni parola.
     var firstUppercased: String {
         isEmpty ? self : prefix(1).uppercased() + dropFirst()
-    }
-}
-
-/// Testi di un record, condivisi fra la pagina "Record" e il dettaglio di una sessione.
-///
-/// Nessuna logica nuova: ``Stats/RecordEntry`` sa già di che tipo è il primato e di
-/// quanto è migliorato, qui si decide solo come scriverlo.
-enum RecordFormat {
-
-    /// Tipo di record in minuscolo, da mettere in coda a una data ("carico record").
-    static func kindName(_ entry: Stats.RecordEntry) -> String {
-        entry.kind.displayName.lowercased()
-    }
-
-    /// Il nuovo primato ("82,5 kg", "12.480 kg" per il volume).
-    static func value(_ entry: Stats.RecordEntry, unit: WeightUnit) -> String {
-        entry.kind == .sessionVolume
-            ? Formatters.volume(entry.value, unit: unit)
-            : Formatters.weight(entry.value, unit: unit)
-    }
-
-    /// Di quanto ha battuto il primato precedente ("+2,5 kg").
-    static func improvement(_ entry: Stats.RecordEntry, unit: WeightUnit) -> String {
-        let converted = unit.value(fromKilograms: entry.improvement)
-        let number = ItalianNumberFormat.signed(
-            converted,
-            fractionDigits: entry.kind == .sessionVolume ? 0 : 1,
-            grouping: entry.kind == .sessionVolume
-        )
-        return "\(number) \(unit.symbol)"
     }
 }
 

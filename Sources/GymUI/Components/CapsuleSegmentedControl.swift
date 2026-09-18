@@ -28,7 +28,7 @@ public struct CapsuleSegmentedControl<Value: Hashable>: View {
             ForEach(values, id: \.self) { value in
                 let isSelected = value == selection
                 Button {
-                    withAnimation(Theme.Motion.spring) { selection = value }
+                    withAnimation(Theme.Motion.quick) { selection = value }
                 } label: {
                     Text(titleForValue(value))
                         .font(.system(.subheadline, weight: isSelected ? .semibold : .regular))

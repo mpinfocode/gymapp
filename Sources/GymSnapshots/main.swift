@@ -3,8 +3,8 @@
 //
 // Uso:
 //   swift run GymSnapshots                 # tutte le scene in docs/preview
-//   swift run GymSnapshots oggi            # solo le scene il cui nome contiene "oggi"
-//   swift run GymSnapshots root sessione   # più filtri, in OR
+//   swift run GymSnapshots misure          # solo le scene il cui nome contiene "misure"
+//   swift run GymSnapshots root scheda     # più filtri, in OR
 //   swift run GymSnapshots --out=/tmp/png  # cartella di output diversa
 //
 // L'output sta in docs/preview, che è in .gitignore: contiene media protetti da
@@ -40,12 +40,10 @@ Task { @MainActor in
 
     let full = await MockData.fullEnvironment()
     let empty = await MockData.emptyEnvironment()
-    let running = await MockData.activeSessionEnvironment()
 
     print(MockData.summary(of: full, label: "pieno"))
-    print(MockData.summary(of: running, label: "sessione in corso"))
 
-    let scenes = makeScenes(full: full, empty: empty, running: running)
+    let scenes = makeScenes(full: full, empty: empty)
     let selected = filters.isEmpty
         ? scenes
         : scenes.filter { scene in filters.contains { scene.name.lowercased().contains($0) } }

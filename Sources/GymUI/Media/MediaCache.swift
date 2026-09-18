@@ -32,6 +32,9 @@ public actor MediaCache {
 
     private var didPrepareDirectory = false
 
+    /// Memoizzazione URL remoto → file su disco (evita un SHA256 per accesso).
+    private var fileURLs: [URL: URL] = [:]
+
     /// - Parameters:
     ///   - directory: cartella di destinazione; di default `Application Support/GymApp/Media`.
     ///   - session: sessione usata per i download.
@@ -52,7 +55,7 @@ public actor MediaCache {
     public func data(for url: URL) async throws -> Data {
         if let cached = memory[url] { return cached }
 
-        let file = fileURL(for: url)
+        let file = cachedFileURL(for: url)
         if let onDisk = try? Data(contentsOf: file), !onDisk.isEmpty {
             remember(onDisk, for: url)
             return onDisk
@@ -88,7 +91,7 @@ public actor MediaCache {
     /// Indica se il media è già disponibile localmente.
     public func isCached(_ url: URL) -> Bool {
         if memory[url] != nil { return true }
-        return FileManager.default.fileExists(atPath: fileURL(for: url).path)
+        return FileManager.default.fileExists(atPath: cachedFileURL(for: url).path)
     }
 
     /// Scarica in anticipo una lista di media con concorrenza limitata.
@@ -154,27 +157,51 @@ public actor MediaCache {
         }
     }
 
-    /// Svuota cache su disco e in memoria.
+    /// Svuota cache su disco e in memoria, inclusa ``DecodedImageCache/shared``
+    /// (altrimenti le immagini già decodificate resterebbero a schermo).
     public func clear() {
         memory.removeAll()
         memoryOrder.removeAll()
         memoryBytes = 0
+        fileURLs.removeAll()
+        DecodedImageCache.shared.removeAll()
         try? FileManager.default.removeItem(at: directory)
         didPrepareDirectory = false
     }
 
     // MARK: - Disco
 
+    /// Tabella esadecimale minuscola: `String(format:)` per byte costava 32
+    /// allocazioni (più 32 stringhe temporanee) a ogni accesso alla cache.
+    /// L'output resta identico, quindi i file già scritti sul telefono restano validi.
+    private static let hexDigits: [UInt8] = Array("0123456789abcdef".utf8)
+
     /// Nome file = SHA256 esadecimale dell'URL assoluto, con l'estensione originale.
     nonisolated func fileName(for url: URL) -> String {
         let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
-        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        var hexBytes = [UInt8]()
+        hexBytes.reserveCapacity(64)
+        for byte in digest {
+            hexBytes.append(Self.hexDigits[Int(byte >> 4)])
+            hexBytes.append(Self.hexDigits[Int(byte & 0x0F)])
+        }
+        let hex = String(decoding: hexBytes, as: UTF8.self)
         let ext = url.pathExtension.lowercased()
         return ext.isEmpty ? hex : "\(hex).\(ext)"
     }
 
     nonisolated func fileURL(for url: URL) -> URL {
         directory.appendingPathComponent(fileName(for: url), isDirectory: false)
+    }
+
+    /// Come ``fileURL(for:)`` ma memoizzato: durante lo scroll lo stesso URL viene
+    /// interrogato molte volte e lo SHA256 non cambia mai.
+    private func cachedFileURL(for url: URL) -> URL {
+        if let known = fileURLs[url] { return known }
+        let file = fileURL(for: url)
+        if fileURLs.count >= 512 { fileURLs.removeAll(keepingCapacity: true) }
+        fileURLs[url] = file
+        return file
     }
 
     private func prepareDirectoryIfNeeded() {
