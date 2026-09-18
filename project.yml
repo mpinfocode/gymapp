@@ -80,6 +80,31 @@ targets:
         # disponibile sul Mac di sviluppo (SPEC §1.2).
         ENABLE_PREVIEWS: NO
 
+        # --- Firma: interruttore indiretto, spento per default ----------------
+        # I cinque valori GYM_* qui sotto sono IDENTICI a quelli di
+        # `settings.base`: con i default il target si comporta esattamente come
+        # prima (nessuna firma) e la pipeline ios.yml non cambia di una virgola.
+        #
+        # Il workflow TestFlight accende la firma passando a xcodebuild SOLO le
+        # variabili GYM_*, mai le CODE_SIGN_* vere. Motivo: qualsiasi setting
+        # passato sulla riga di comando vale per TUTTI i target del build,
+        # compresi quelli del package SPM locale (GymCore/GymUI/GymFeatures);
+        # un CODE_SIGN_IDENTITY / DEVELOPMENT_TEAM / PROVISIONING_PROFILE_*
+        # globale è il modo classico di far fallire la compilazione dei target
+        # SPM ("requires a development team", "profile doesn't match bundle id").
+        # Le impostazioni di firma vere restano invece definite qui, cioè solo
+        # sul target dell'app, dove servono.
+        GYM_CODE_SIGN_STYLE: Manual
+        GYM_CODE_SIGN_IDENTITY: ""
+        GYM_DEVELOPMENT_TEAM: ""
+        GYM_CODE_SIGNING_ALLOWED: NO
+        GYM_CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_STYLE: $(GYM_CODE_SIGN_STYLE)
+        CODE_SIGN_IDENTITY: $(GYM_CODE_SIGN_IDENTITY)
+        DEVELOPMENT_TEAM: $(GYM_DEVELOPMENT_TEAM)
+        CODE_SIGNING_ALLOWED: $(GYM_CODE_SIGNING_ALLOWED)
+        CODE_SIGNING_REQUIRED: $(GYM_CODE_SIGNING_REQUIRED)
+
     # Info.plist generato da XcodeGen a ogni `xcodegen generate`.
     info:
       path: App/Info.plist
@@ -89,8 +114,18 @@ targets:
         CFBundleDevelopmentRegion: it
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # App solo-iOS: chiave attesa da App Store Connect nei bundle iPhone
+        # (Xcode la mette da sempre nei template; qui l'Info.plist è scritto a
+        # mano, quindi va dichiarata).
+        LSRequiresIPhoneOS: true
         # Launch screen "vuoto": SwiftUI, nessuno storyboard, niente letterboxing.
         UILaunchScreen: {}
+        # Ciclo di vita a scene. SwiftUI (`App` + `WindowGroup`) lo adotta già da
+        # solo, ma dall'SDK di iOS 26 Apple lo dà per obbligatorio e Xcode genera
+        # questa chiave per i target SwiftUI: dichiararla toglie ogni dubbio.
+        # Nessuna `UISceneConfigurations`: la configurazione la fornisce SwiftUI.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
         # Nessuna crittografia non esente → niente domande di export compliance.
         ITSAppUsesNonExemptEncryption: false
         UISupportedInterfaceOrientations:

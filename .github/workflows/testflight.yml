@@ -1,0 +1,569 @@
+name: TestFlight
+
+# Distribuzione su TestFlight dell'app Gym (bundle id it.mpinformatica.gymapp).
+#
+# Differenza con ios.yml: quella pipeline produce un'IPA NON firmata da
+# sideloadare e resta il percorso "gratuito"; questa firma davvero (firma
+# automatica "cloud" di Xcode, chiave API di App Store Connect) e carica il
+# binario su App Store Connect. Le due pipeline sono indipendenti: ios.yml non
+# è stata toccata.
+#
+# Prerequisiti una tantum lato Apple e caricamento dei 4 secret: README,
+# sezione "TestFlight".
+
+on:
+  # Nessun trigger automatico su push/PR: una build su TestFlight consuma una
+  # "slot" di build e va lanciata quando si vuole davvero. In particolare MAI
+  # `pull_request`/`pull_request_target`: il repository è pubblico e un PR da
+  # un fork non deve poter avvicinarsi alla chiave di firma.
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "Note di rilascio / cosa provare (finiscono nel riepilogo del run, da incollare in TestFlight)"
+        required: false
+        type: string
+        default: ""
+  push:
+    tags:
+      - "v*"
+
+# Un solo upload alla volta, e soprattutto MAI cancellato a metà: interrompere
+# un caricamento verso App Store Connect lascia build fantasma in elaborazione.
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+# Sola lettura: il workflow non scrive nulla nel repository.
+permissions:
+  contents: read
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+  HOMEBREW_NO_ANALYTICS: "1"
+  NSUnbufferedIO: "YES"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Gate economico: gli stessi comandi che si usano in locale, più i controlli
+  # statici sui requisiti di App Store Connect che non richiedono di compilare.
+  # Se qualcosa qui è rosso non si spendono minuti macOS in archive/upload.
+  # ---------------------------------------------------------------------------
+  checks:
+    name: Checks (SwiftPM)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Seleziona Xcode
+        # Action di terze parti: pinnata al commit SHA completo (il tag `v1`
+        # oggi punta esattamente a questo commit, v1.7.0). Le action ufficiali
+        # `actions/*` restano al tag major.
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: latest-stable
+
+      - name: Versioni toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: swift build
+        run: swift build
+
+      - name: swift run GymChecks
+        run: swift run GymChecks
+
+      - name: Requisiti App Store — icona 1024 senza canale alpha
+        run: |
+          set -euo pipefail
+          # App Store Connect rifiuta l'icona con trasparenza (ITMS-90717) o di
+          # dimensioni sbagliate. Lettura diretta dell'header PNG: nessuna
+          # dipendenza, nessun tool grafico.
+          python3 - <<'PY'
+          import pathlib
+          import struct
+          import sys
+
+          path = pathlib.Path("App/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png")
+          data = path.read_bytes()
+
+          problemi = []
+          if data[:8] != b"\x89PNG\r\n\x1a\n":
+              problemi.append("il file non è un PNG valido")
+          else:
+              larghezza, altezza = struct.unpack(">II", data[16:24])
+              tipo_colore = data[25]
+              if (larghezza, altezza) != (1024, 1024):
+                  problemi.append(f"dimensioni {larghezza}x{altezza} invece di 1024x1024")
+              # Tipi colore PNG con canale alpha: 4 (grigio+alpha) e 6 (RGBA).
+              if tipo_colore in (4, 6):
+                  problemi.append("l'immagine ha un canale alpha")
+              if b"tRNS" in data:
+                  problemi.append("l'immagine ha un chunk di trasparenza tRNS")
+
+          if problemi:
+              print("::error::Icona non conforme (" + "; ".join(problemi) + "). "
+                    "Rigenerala con `swift scripts/make_icon.swift`.")
+              sys.exit(1)
+
+          print(f"Icona OK: 1024x1024, opaca, {len(data)} byte.")
+          PY
+
+      - name: Requisiti App Store — chiavi obbligatorie in project.yml
+        run: |
+          set -euo pipefail
+          # L'Info.plist non è versionato (lo genera XcodeGen da project.yml):
+          # il controllo si fa quindi sulla sorgente.
+          mancanti=""
+          for chiave in CFBundleDisplayName CFBundleShortVersionString CFBundleVersion \
+                        ITSAppUsesNonExemptEncryption UILaunchScreen \
+                        UISupportedInterfaceOrientations LSRequiresIPhoneOS; do
+            if ! grep -q "^[[:space:]]*${chiave}:" project.yml; then
+              mancanti="$mancanti $chiave"
+            fi
+          done
+          if [ -n "$mancanti" ]; then
+            echo "::error::Chiavi Info.plist mancanti in project.yml:$mancanti"
+            exit 1
+          fi
+          echo "Chiavi Info.plist obbligatorie presenti in project.yml."
+
+  # ---------------------------------------------------------------------------
+  # Archive firmato + export + upload su App Store Connect.
+  # ---------------------------------------------------------------------------
+  testflight:
+    name: Archive firmato e upload
+    needs: checks
+    runs-on: macos-latest
+    # 90 e non 60: nel caso peggiore il job fa due archive (strategia principale
+    # + fallback) prima di arrendersi.
+    timeout-minutes: 90
+    steps:
+      # I 4 secret si controllano PRIMA di qualunque cosa costosa: un run che
+      # fallisce dopo 15 minuti di build perché manca una variabile è tempo
+      # macOS buttato.
+      - name: Verifica i secret richiesti
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          mancanti=""
+          for nome in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 APPLE_TEAM_ID; do
+            if [ -z "${!nome:-}" ]; then
+              mancanti="$mancanti $nome"
+            fi
+          done
+          if [ -n "$mancanti" ]; then
+            echo "::error::Secret mancanti o vuoti:$mancanti — vanno impostati in Settings → Secrets and variables → Actions (istruzioni nel README, sezione TestFlight). Il workflow si ferma qui."
+            exit 1
+          fi
+
+          # Il Key ID finisce nel nome di un file (AuthKey_<id>.p8): niente
+          # caratteri strani, niente percorsi.
+          case "$ASC_KEY_ID" in
+            *[!A-Za-z0-9]*|"")
+              echo "::error::ASC_KEY_ID non ha un formato valido: deve contenere solo lettere e cifre (di solito 10 caratteri). Controlla di non averci incollato spazi o a capo."
+              exit 1
+              ;;
+          esac
+
+          # Controllo di forma sul .p8, senza mai stamparne il contenuto.
+          case "$ASC_KEY_P8" in
+            *"BEGIN PRIVATE KEY"*) : ;;
+            *)
+              echo "::error::ASC_KEY_P8 non sembra il contenuto di un file .p8 (manca la riga BEGIN PRIVATE KEY). Ricaricalo con: gh secret set ASC_KEY_P8 < AuthKey_XXXXXXXXXX.p8"
+              exit 1
+              ;;
+          esac
+
+          echo "Tutti e quattro i secret sono presenti (nessun valore viene stampato)."
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Seleziona Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: latest-stable
+
+      - name: Versioni toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # La chiave privata vive solo in $RUNNER_TEMP, con permessi 600, e viene
+      # cancellata dall'ultimo step (`if: always()`).
+      # La cartella si chiama `private_keys` perché altool cerca il file
+      # AuthKey_<id>.p8 in `./private_keys` relativo alla directory corrente
+      # (oltre che in $API_PRIVATE_KEYS_DIR): impostiamo entrambe le cose, così
+      # funziona con qualsiasi versione di altool.
+      - name: Prepara la chiave API (file temporaneo, permessi 600)
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          ASC_DIR="$RUNNER_TEMP/asc"
+          KEY_DIR="$ASC_DIR/private_keys"
+          rm -rf "$ASC_DIR"
+          mkdir -p "$KEY_DIR"
+          chmod 700 "$ASC_DIR" "$KEY_DIR"
+
+          KEY_PATH="$KEY_DIR/AuthKey_${ASC_KEY_ID}.p8"
+          ( umask 077; printf '%s\n' "$ASC_KEY_P8" > "$KEY_PATH" )
+          chmod 600 "$KEY_PATH"
+          test -s "$KEY_PATH"
+
+          {
+            echo "ASC_DIR=$ASC_DIR"
+            echo "ASC_KEY_PATH=$KEY_PATH"
+            echo "API_PRIVATE_KEYS_DIR=$KEY_DIR"
+          } >> "$GITHUB_ENV"
+
+          echo "Chiave scritta in una cartella temporanea del runner con permessi $(stat -f '%Lp' "$KEY_PATH") (contenuto mai stampato)."
+
+      - name: Calcola versione e numero di build
+        run: |
+          set -euo pipefail
+
+          # Versione marketing: dal tag se il run parte da un tag vX.Y.Z,
+          # altrimenti da project.yml (unica fonte di verità).
+          case "${GITHUB_REF:-}" in
+            refs/tags/v*)
+              VERSIONE="${GITHUB_REF#refs/tags/v}"
+              ORIGINE="tag ${GITHUB_REF#refs/tags/}"
+              ;;
+            *)
+              VERSIONE="$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"\{0,1\}\([0-9][0-9.]*\)"\{0,1\}[[:space:]]*$/\1/p' project.yml | head -n 1)"
+              ORIGINE="project.yml"
+              ;;
+          esac
+
+          if ! printf '%s' "$VERSIONE" | grep -Eq '^[0-9]+(\.[0-9]+){0,2}$'; then
+            echo "::error::Versione marketing non valida ('$VERSIONE', origine: $ORIGINE). App Store Connect vuole al massimo tre numeri separati da punto, es. 0.1.0."
+            exit 1
+          fi
+
+          # Numero di build: secondi trascorsi dal 1° gennaio 2020 UTC.
+          # - sempre crescente, anche fra workflow diversi (github.run_number è
+          #   un contatore PER workflow: quello di ios.yml e quello di questo
+          #   file ripartirebbero da numeri sovrapposti);
+          # - unico al secondo;
+          # - resta un singolo intero sotto 2^32, come pretende App Store Connect
+          #   (oggi ~2,1·10^8, supera il 2^32 solo nel 2156).
+          BUILD=$(( $(date -u +%s) - 1577836800 ))
+
+          {
+            echo "VERSIONE=$VERSIONE"
+            echo "BUILD=$BUILD"
+          } >> "$GITHUB_ENV"
+
+          echo "Versione $VERSIONE (da $ORIGINE), build $BUILD."
+
+      - name: Installa XcodeGen
+        run: brew install xcodegen
+
+      - name: Genera GymApp.xcodeproj
+        run: xcodegen generate --spec project.yml
+
+      - name: Risolvi il package locale
+        run: |
+          set -euo pipefail
+          xcodebuild -resolvePackageDependencies \
+            -project GymApp.xcodeproj \
+            -scheme Gym \
+            -derivedDataPath .derived
+
+      # Nessun xcbeautify in questo workflow: quando la firma automatica non va,
+      # la diagnosi sta in righe di log che il formatter tende a nascondere.
+      # Meglio il log grezzo, è l'unico momento in cui lo si legge davvero.
+      #
+      # ATTENZIONE alla scelta di firma in questo passo. Due trappole classiche,
+      # entrambe evitate qui:
+      #  1. CODE_SIGN_STYLE=Automatic insieme a CODE_SIGN_IDENTITY="Apple
+      #     Distribution" fa fallire l'archive con "…has conflicting provisioning
+      #     settings. …is automatically signed for development, but a conflicting
+      #     code signing identity Apple Distribution has been manually
+      #     specified": in stile automatico l'identità di archive non si forza.
+      #  2. La firma automatica di *sviluppo* per `generic/platform=iOS` pretende
+      #     un profilo di sviluppo, che a sua volta pretende almeno un
+      #     dispositivo registrato nel team ("Your team has no devices from which
+      #     to generate a provisioning profile"). Su un account appena aperto non
+      #     c'è nessun dispositivo, e il runner non ne ha.
+      # Quindi: l'archive NON tocca la firma di distribuzione, che è tutta nel
+      # passo di export.
+      - name: Archive senza firma
+        run: |
+          set -euo pipefail
+          # Stessi identici flag di firma dell'archive di ios.yml, che è verde:
+          # l'unico passo costoso del workflow parte quindi da una ricetta
+          # già dimostrata su questo progetto.
+          xcodebuild archive \
+            -project GymApp.xcodeproj \
+            -scheme Gym \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/Gym.xcarchive" \
+            -derivedDataPath .derived \
+            MARKETING_VERSION="$VERSIONE" \
+            CURRENT_PROJECT_VERSION="$BUILD" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: Firma di distribuzione ed export
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Niente `set -e`: il fallimento del primo tentativo è previsto e
+          # gestito a mano.
+          set -uo pipefail
+
+          # Il nome del metodo di export è cambiato con Xcode 15.3
+          # (app-store → app-store-connect). Il file committato usa il nome
+          # nuovo; se il runner avesse un Xcode più vecchio si ripiega su quello
+          # storico invece di fallire con "unsupported method".
+          VERSIONE_XCODE="$(xcodebuild -version | head -n 1 | awk '{print $2}')"
+          PIU_BASSA="$(printf '15.3\n%s\n' "$VERSIONE_XCODE" | sort -V | head -n 1)"
+          if [ "$PIU_BASSA" = "15.3" ]; then
+            METODO="app-store-connect"
+          else
+            METODO="app-store"
+          fi
+          echo "Xcode $VERSIONE_XCODE → method=$METODO"
+
+          # Copia in area temporanea: il file nel repository resta intatto e il
+          # Team ID (secret) non viene scritto dentro il working tree.
+          OPZIONI="$RUNNER_TEMP/ExportOptions.plist"
+          cp scripts/ExportOptions.plist "$OPZIONI" || exit 1
+          /usr/libexec/PlistBuddy -c "Set :method $METODO" "$OPZIONI" || exit 1
+          /usr/libexec/PlistBuddy -c "Set :teamID $APPLE_TEAM_ID" "$OPZIONI" || exit 1
+
+          esporta() {
+            rm -rf build/export
+            xcodebuild -exportArchive \
+              -archivePath "$PWD/build/Gym.xcarchive" \
+              -exportPath "$PWD/build/export" \
+              -exportOptionsPlist "$OPZIONI" \
+              -allowProvisioningUpdates \
+              -authenticationKeyPath "$ASC_KEY_PATH" \
+              -authenticationKeyID "$ASC_KEY_ID" \
+              -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          }
+
+          # --- Strategia A (principale) --------------------------------------
+          # L'archivio è completamente non firmato; certificato di distribuzione
+          # e profilo li crea/scarica `-exportArchive` con `signingStyle:
+          # automatic` + `-allowProvisioningUpdates` + chiave API, e firma lui
+          # il bundle. L'app non ha nessuna capability, quindi gli entitlement
+          # che servono (application-identifier, team-identifier,
+          # get-task-allow=false) vengono tutti dal profilo.
+          echo "=== Strategia A: firma di distribuzione interamente in -exportArchive ==="
+          if esporta; then
+            echo "STRATEGIA=A — archivio non firmato, firma di distribuzione in export" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          # --- Strategia B (fallback automatico) ------------------------------
+          # Se l'export rifiuta un archivio del tutto privo di firma, si
+          # ri-archivia con firma automatica *ad hoc*: è la ricetta a cui la DTS
+          # di Apple rimanda per la CI (quella che usa Xcode Cloud).
+          # CODE_SIGN_IDENTITY=- più AD_HOC_CODE_SIGNING_ALLOWED=YES firma con
+          # la pseudo-identità "-": non serve nessun certificato, nessun profilo
+          # e nessun dispositivo registrato, ma gli entitlement vengono generati
+          # già in fase di archive. La firma di distribuzione resta comunque
+          # compito di -exportArchive.
+          echo "::warning::Strategia A fallita in export. Riprovo con la strategia B: ri-archivio con firma automatica ad hoc e riesporto. Il log qui sopra contiene il motivo del primo tentativo."
+
+          if ! xcodebuild archive \
+            -project GymApp.xcodeproj \
+            -scheme Gym \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/Gym.xcarchive" \
+            -derivedDataPath .derived \
+            MARKETING_VERSION="$VERSIONE" \
+            CURRENT_PROJECT_VERSION="$BUILD" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            GYM_CODE_SIGN_STYLE=Automatic \
+            GYM_CODE_SIGNING_ALLOWED=YES \
+            GYM_CODE_SIGNING_REQUIRED=YES \
+            GYM_CODE_SIGN_IDENTITY=- \
+            GYM_DEVELOPMENT_TEAM="$APPLE_TEAM_ID"; then
+            echo "::error::Anche il ri-archivio della strategia B è fallito. Se l'errore parla di provisioning o di certificati, controlla che la chiave API abbia il ruolo Admin (vedi README, sezione TestFlight)."
+            exit 1
+          fi
+
+          echo "=== Strategia B: riesporto dall'archivio firmato ad hoc ==="
+          if esporta; then
+            echo "STRATEGIA=B — archivio firmato ad hoc, firma di distribuzione in export" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          echo "::error::Export fallito con entrambe le strategie. Le cause più probabili, in ordine: (1) la chiave API non ha il ruolo Admin e non può creare certificato di distribuzione e profilo; (2) l'App ID it.mpinformatica.gymapp non è registrato sul portale sviluppatori; (3) APPLE_TEAM_ID errato. Dettagli nel README, sezione TestFlight."
+          exit 1
+
+      - name: Controlla l'IPA prima di caricarla
+        run: |
+          set -euo pipefail
+          IPA="$(ls -1 build/export/*.ipa 2>/dev/null | head -n 1 || true)"
+          if [ -z "$IPA" ]; then
+            echo "::error::Nessun .ipa in build/export: l'export non ha prodotto il pacchetto."
+            exit 1
+          fi
+
+          # Si controlla ciò che si carica davvero, non l'archivio intermedio.
+          ISPEZIONE="$RUNNER_TEMP/ipa-check"
+          rm -rf "$ISPEZIONE"
+          mkdir -p "$ISPEZIONE"
+          unzip -q "$IPA" -d "$ISPEZIONE"
+          APP="$(ls -d "$ISPEZIONE"/Payload/*.app 2>/dev/null | head -n 1 || true)"
+          if [ -z "$APP" ]; then
+            echo "::error::L'IPA non contiene Payload/*.app."
+            exit 1
+          fi
+
+          if [ ! -f "$APP/embedded.mobileprovision" ]; then
+            echo "::error::L'app nell'IPA non contiene un profilo di provisioning: non è firmata per la distribuzione."
+            exit 1
+          fi
+          if ! codesign -dv "$APP" 2>&1 | grep -q '^Identifier='; then
+            echo "::error::L'app nell'IPA non risulta firmata (codesign non trova una firma valida)."
+            exit 1
+          fi
+
+          leggi() { /usr/libexec/PlistBuddy -c "Print :$1" "$APP/Info.plist" 2>/dev/null || true; }
+
+          mancanti=""
+          # CFBundleIconName è inserito da actool a partire dall'asset catalog:
+          # se manca, App Store Connect risponde ITMS-90713.
+          for chiave in CFBundleIdentifier CFBundleDisplayName CFBundleIconName \
+                        CFBundleShortVersionString CFBundleVersion \
+                        LSRequiresIPhoneOS MinimumOSVersion; do
+            if [ -z "$(leggi "$chiave")" ]; then
+              mancanti="$mancanti $chiave"
+            fi
+          done
+          if [ -n "$mancanti" ]; then
+            echo "::error::Chiavi assenti nell'Info.plist dell'app costruita:$mancanti"
+            exit 1
+          fi
+
+          # ITSAppUsesNonExemptEncryption vale `false`: va confrontata a parte,
+          # perché il valore atteso non è una stringa non vuota qualunque.
+          if [ "$(leggi ITSAppUsesNonExemptEncryption)" != "false" ]; then
+            echo "::error::ITSAppUsesNonExemptEncryption non vale false: App Store Connect chiederebbe la conformità all'export di crittografia a ogni build."
+            exit 1
+          fi
+
+          VERSIONE_BUNDLE="$(leggi CFBundleShortVersionString)"
+          BUILD_BUNDLE="$(leggi CFBundleVersion)"
+          if [ "$VERSIONE_BUNDLE" != "$VERSIONE" ] || [ "$BUILD_BUNDLE" != "$BUILD" ]; then
+            echo "::error::Versione nel bundle ($VERSIONE_BUNDLE/$BUILD_BUNDLE) diversa da quella richiesta ($VERSIONE/$BUILD)."
+            exit 1
+          fi
+
+          rm -rf "$ISPEZIONE"
+          echo "IPA firmata e conforme: $VERSIONE_BUNDLE (build $BUILD_BUNDLE)."
+
+      - name: Carica su App Store Connect
+        id: upload
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+
+          IPA="$(ls -1 build/export/*.ipa 2>/dev/null | head -n 1 || true)"
+          if [ -z "$IPA" ]; then
+            echo "::error::Nessun .ipa in build/export: l'export non ha prodotto il pacchetto."
+            exit 1
+          fi
+          IPA="$PWD/$IPA"
+          echo "Pacchetto: $(basename "$IPA") ($(du -h "$IPA" | cut -f1))"
+
+          # Le versioni recenti di altool documentano --api-key/--api-issuer,
+          # quelle storiche --apiKey/--apiIssuer; entrambe convivono a seconda
+          # della release di Xcode. Si sceglie in base a ciò che l'help dichiara.
+          AIUTO="$(xcrun altool --help 2>&1 || true)"
+          if printf '%s' "$AIUTO" | grep -q -- '--apiKey'; then
+            F_KEY="--apiKey"
+            F_ISS="--apiIssuer"
+          else
+            F_KEY="--api-key"
+            F_ISS="--api-issuer"
+          fi
+
+          # Ci si sposta nella cartella della chiave: altool cerca
+          # ./private_keys/AuthKey_<id>.p8 anche a prescindere da
+          # $API_PRIVATE_KEYS_DIR, che è comunque già impostata.
+          cd "$ASC_DIR"
+
+          # Un passaggio solo: `--upload-app` esegue lato Apple le stesse
+          # verifiche di `--validate-app` e restituisce gli stessi codici ITMS,
+          # quindi una validazione separata raddoppierebbe il trasferimento
+          # senza aggiungere informazioni.
+          xcrun altool --upload-app -f "$IPA" -t ios \
+            "$F_KEY" "$ASC_KEY_ID" "$F_ISS" "$ASC_ISSUER_ID" \
+            --output-format normal
+
+          echo "Upload completato: la build compare in TestFlight dopo l'elaborazione (di solito 5-30 minuti)."
+
+      # Cancellazione della chiave privata: gira sempre, anche se qualcosa sopra
+      # è fallito o il run è stato annullato.
+      - name: Cancella la chiave API dal runner
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/asc"
+          rm -rf "$RUNNER_TEMP/ipa-check"
+          rm -f "$RUNNER_TEMP/ExportOptions.plist"
+          if [ -e "$RUNNER_TEMP/asc" ]; then
+            echo "::error::La cartella della chiave API è ancora presente sul runner."
+            exit 1
+          fi
+          echo "Chiave API e opzioni di export rimosse dal runner."
+
+      - name: Riepilogo
+        if: always()
+        env:
+          ESITO_UPLOAD: ${{ steps.upload.outcome }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          set -euo pipefail
+          case "${ESITO_UPLOAD:-}" in
+            success) esito="✅ caricata su App Store Connect" ;;
+            failure) esito="❌ upload fallito" ;;
+            cancelled) esito="⚠️ run annullato" ;;
+            *) esito="— non eseguito (un passo precedente ha fallito)" ;;
+          esac
+
+          {
+            echo "### TestFlight"
+            echo ""
+            echo "| campo | valore |"
+            echo "| --- | --- |"
+            echo "| versione | ${VERSIONE:-n/d} |"
+            echo "| build | ${BUILD:-n/d} |"
+            echo "| bundle id | \`it.mpinformatica.gymapp\` |"
+            echo "| strategia di firma | ${STRATEGIA:-n/d} |"
+            echo "| esito upload | $esito |"
+            echo ""
+            if [ -n "${NOTE:-}" ]; then
+              echo "**Note di rilascio / cosa provare** — da incollare in App Store Connect → TestFlight → build → *Cosa provare*:"
+              echo ""
+              echo "> ${NOTE}"
+            else
+              echo "_Nessuna nota di rilascio indicata._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

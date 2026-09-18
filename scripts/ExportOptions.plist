@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Opzioni di export per `xcodebuild -exportArchive`, usate SOLO dal workflow
+	.github/workflows/testflight.yml (la pipeline ios.yml non firma e non esporta).
+
+	Il file è volutamente committato e leggibile: non contiene segreti.
+	`teamID` resta vuoto qui e viene riempito a runtime dal workflow con il
+	valore del secret APPLE_TEAM_ID (PlistBuddy), su una COPIA in $RUNNER_TEMP:
+	il file nel repository non viene mai modificato.
+
+	Note sulle singole chiavi:
+
+	- method = app-store-connect
+	  Nome nuovo introdotto da Xcode 15.3 (prima si chiamava `app-store`).
+	  Il workflow lo riscrive automaticamente nella forma vecchia se dovesse
+	  girare su un Xcode più vecchio di 15.3.
+
+	- destination = export
+	  Esportiamo l'IPA su disco e la carichiamo in un passo separato con
+	  `xcrun altool`. Il valore alternativo `upload` farebbe export+upload in
+	  un colpo solo, ma a oggi si autentica con l'Apple ID salvato nelle
+	  preferenze di Xcode e NON con la chiave API passata a -authenticationKey*
+	  (feedback assistant FB9145847, tuttora aperto): su un runner effimero,
+	  dove nessun Apple ID è mai stato inserito, fallirebbe. In più `export`
+	  lascia l'IPA su disco, quindi l'upload è ripetibile senza ricompilare.
+
+	- signingStyle = automatic
+	  Firma automatica "cloud": certificato di distribuzione e profilo vengono
+	  creati/aggiornati da Xcode tramite la chiave API (-allowProvisioningUpdates).
+
+	- manageAppVersionAndBuildNumber = false
+	  Se lasciata a true, Xcode proverebbe a incrementare da solo il numero di
+	  build interrogando App Store Connect con l'Apple ID delle preferenze:
+	  stesso problema di `destination: upload`. Il numero di build lo decide il
+	  workflow (CURRENT_PROJECT_VERSION sulla riga di comando).
+-->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>export</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>teamID</key>
+	<string></string>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>stripSwiftSymbols</key>
+	<true/>
+</dict>
+</plist>

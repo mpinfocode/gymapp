@@ -128,6 +128,250 @@ Per ora non serve: l'app ha un solo utente e la si guarda sul telefono.
 
 ---
 
+## TestFlight
+
+[`.github/workflows/testflight.yml`](.github/workflows/testflight.yml) è la seconda pipeline:
+firma l'app per davvero e la carica su App Store Connect, da dove arriva sull'iPhone tramite
+l'app **TestFlight**. Rispetto al sideload dell'IPA non firmata: niente rinnovo ogni 7 giorni
+(le build durano **90 giorni**), niente Mac collegato, installazione anche per un'altra persona.
+Richiede l'**Apple Developer Program a pagamento** (99 €/anno), che l'utente ha.
+
+`ios.yml` resta invariata e continua a produrre l'IPA non firmata: le due pipeline sono
+indipendenti e si possono usare entrambe.
+
+| | `ios.yml` | `testflight.yml` |
+| --- | --- | --- |
+| trigger | push su `main`, manuale | **solo** manuale e tag `v*` |
+| firma | nessuna | automatica "cloud" con chiave API |
+| risultato | artifact `Gym-unsigned.ipa` | build in TestFlight |
+| segreti | nessuno | 4 GitHub Secrets |
+
+### 1. Prerequisiti una tantum, lato Apple
+
+Tutto si fa una volta sola, a mano, dal browser.
+
+**a) Registrare l'App ID.** [developer.apple.com → Certificates, Identifiers & Profiles →
+Identifiers](https://developer.apple.com/account/resources/identifiers/list) → **+** → *App IDs* →
+*App* → Description: `Gym`, Bundle ID: **Explicit**, `it.mpinformatica.gymapp`. Nessuna capability
+da spuntare: l'app usa solo notifiche **locali** (che non richiedono capability) e rete in HTTPS.
+
+**b) Creare il record dell'app in App Store Connect.**
+[appstoreconnect.apple.com → App](https://appstoreconnect.apple.com/apps) → **+** → *Nuova app*:
+piattaforma iOS, nome (dev'essere unico su tutto l'App Store — se "Gym" è occupato serve un nome
+diverso, p.es. "Gym — scheda palestra"; il nome sull'icona resta comunque `Gym`, è
+`CFBundleDisplayName`), lingua principale *Italiano*, Bundle ID `it.mpinformatica.gymapp`, SKU
+libero (p.es. `gymapp`). **Senza questo record l'upload fallisce**: non basta l'App ID.
+
+Nella scheda dell'app conviene compilare subito anche **Privacy dell'app → "Non raccogliamo dati
+da questa app"** (è vero: nessun backend, nessun analytics). Non serve per i tester interni, serve
+appena si aggiungono tester esterni o si va in review.
+
+**c) Creare la chiave API.** [App Store Connect → Utenti e accessi → Integrazioni → App Store
+Connect API](https://appstoreconnect.apple.com/access/integrations/api) → scheda **Chiavi del team**
+→ *Genera chiave API*. Nome libero (p.es. `github-actions-gymapp`).
+
+> **Ruolo da assegnare: `Admin`.** È il minimo che funziona davvero per quello che fa questo
+> workflow, e la ragione è precisa:
+> - la firma automatica "cloud" (`-allowProvisioningUpdates`) fa creare a Xcode il **certificato di
+>   distribuzione** e il **profilo di provisioning** passando dagli endpoint *Certificates,
+>   Identifiers & Profiles* dell'API. Sulla tabella dei ruoli Apple, *creare e revocare certificati
+>   di distribuzione* e *creare ed eliminare profili di distribuzione* compaiono solo per **Account
+>   Holder e Admin**; App Manager e Developer non li hanno.
+> - deve essere una **chiave del team**, non una *chiave individuale*: la documentazione Apple dice
+>   esplicitamente che «Individual keys aren't able to use Provisioning endpoints».
+> - `App Manager` basterebbe **solo** per caricare il binario, cioè se ci si portasse certificati e
+>   profili da fuori (fastlane match o simili): non è il caso qui. `Developer` non può nemmeno
+>   caricare build.
+>
+> Su un account con un solo sviluppatore l'Account Holder è già Admin, quindi non si sta allargando
+> nulla: la chiave ha gli stessi poteri di chi la crea. Se un giorno dovesse dare fastidio, la via
+> per scendere a `App Manager` è gestire certificato e profilo a mano (e allora va rivisto il
+> workflow).
+
+Alla generazione la pagina mostra **Key ID** e **Issuer ID** e un link *Scarica chiave API*: il file
+`AuthKey_XXXXXXXXXX.p8` **si scarica una volta sola**, Apple non ne tiene copia. Mettilo in un posto
+sicuro (p.es. il portachiavi/1Password), **fuori dal repository** — questo repo è pubblico.
+
+**d) Annotare il Team ID.** [developer.apple.com → Membership
+details](https://developer.apple.com/account#MembershipDetailsCard): 10 caratteri, p.es. `AB12CD34EF`.
+
+### 2. I quattro GitHub Secrets
+
+| secret | dove si trova | esempio |
+| --- | --- | --- |
+| `ASC_KEY_ID` | Key ID della chiave API | `2X9ABCD1EF` |
+| `ASC_ISSUER_ID` | Issuer ID, in cima alla stessa pagina | `69a6de70-…-…` |
+| `ASC_KEY_P8` | **contenuto** del file `AuthKey_XXXXXXXXXX.p8` | `-----BEGIN PRIVATE KEY-----…` |
+| `APPLE_TEAM_ID` | Team ID | `AB12CD34EF` |
+
+Dal terminale, con [GitHub CLI](https://cli.github.com) già autenticata (`gh auth login`), dalla
+cartella del repository:
+
+```bash
+gh secret set ASC_KEY_ID     --body "2X9ABCD1EF"
+gh secret set ASC_ISSUER_ID  --body "69a6de70-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+gh secret set APPLE_TEAM_ID  --body "AB12CD34EF"
+
+# Il .p8 si passa come FILE, non copiato-incollato: gli a capo vanno preservati.
+gh secret set ASC_KEY_P8 < ~/Downloads/AuthKey_2X9ABCD1EF.p8
+```
+
+Verifica (mostra solo i nomi, mai i valori — i secret non sono più rileggibili nemmeno dall'utente):
+
+```bash
+gh secret list
+```
+
+Il workflow si ferma al primo step con un messaggio esplicito se ne manca uno.
+
+### 3. Lanciare il workflow
+
+```bash
+# Lancio manuale, con le note per i tester
+gh workflow run testflight.yml -f note="Prima build: provare creazione scheda e sessione"
+
+# Seguire il run
+gh run watch
+
+# In alternativa: una release vera, con tag
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+Oppure dal browser: tab **Actions → TestFlight → Run workflow**.
+
+Cosa succede, in ordine: `swift build` + `swift run GymChecks` + controlli su icona e Info.plist
+(gate economico: se è rosso non si spendono minuti macOS) → XcodeGen → `xcodebuild archive`
+**senza firma** → `-exportArchive` con `method: app-store-connect`, che è il passo che crea
+certificato e profilo con la chiave API e firma l'app → controllo dell'IPA → `xcrun altool
+--upload-app`. Alla fine il riepilogo del run mostra versione, numero di build, strategia di firma
+usata ed esito.
+
+Dettagli delle scelte:
+
+- **Solo `workflow_dispatch` e tag `v*`**. Mai `pull_request`/`pull_request_target`: il repository è
+  pubblico e una PR da un fork non deve poter avvicinarsi alla chiave di firma. `permissions:
+  contents: read`, `concurrency` dedicato e **senza** `cancel-in-progress` (interrompere un upload a
+  metà lascia build fantasma "in elaborazione" su App Store Connect).
+- **La chiave `.p8`** viene scritta in una cartella temporanea del runner con permessi `600`, non
+  viene mai stampata (GitHub la maschera comunque nei log) e uno step `if: always()` cancella la
+  cartella anche quando il run fallisce o viene annullato.
+- **Nessuna IPA pubblicata come artifact.** Su un repository pubblico gli artifact dei run sono
+  scaricabili da chiunque; l'IPA firmata contiene il profilo di provisioning. La build sta in
+  TestFlight, che è il posto giusto.
+- **Export + `altool`, non `destination: upload`.** `xcodebuild -exportArchive` sa anche caricare da
+  solo (`destination: upload` nell'`ExportOptions.plist`), ma a oggi per quel passo si autentica con
+  l'Apple ID salvato nelle preferenze di Xcode e **non** con la chiave API passata a
+  `-authenticationKey*` (Feedback Assistant FB9145847, ancora aperto): su un runner effimero, dove
+  nessun Apple ID è mai stato inserito, fallirebbe. Esportare e poi caricare con `xcrun altool`
+  funziona con la sola chiave API, lascia l'IPA su disco (upload ripetibile senza ricompilare) e dà
+  messaggi d'errore molto più leggibili. `notarytool` non c'entra: serve alla notarizzazione delle
+  app **macOS** distribuite fuori dall'App Store.
+- **Dove avviene la firma, e perché non nell'archive.** L'archive gira **senza firma**, con gli
+  stessi identici flag dell'archive di `ios.yml` (che è verde): l'unico passo davvero costoso parte
+  quindi da una ricetta già dimostrata su questo progetto. Certificato di distribuzione, profilo e
+  firma sono tutti compito di `-exportArchive` (`signingStyle: automatic` +
+  `-allowProvisioningUpdates` + chiave API). Si evitano così due trappole classiche della firma in
+  CI: `CODE_SIGN_STYLE=Automatic` insieme a `CODE_SIGN_IDENTITY="Apple Distribution"` fa fallire
+  l'archive con *«has conflicting provisioning settings … is automatically signed for development,
+  but a conflicting code signing identity Apple Distribution has been manually specified»*; e la
+  firma automatica di **sviluppo** per `generic/platform=iOS` pretende un profilo di sviluppo, che a
+  sua volta pretende almeno un **dispositivo registrato** nel team (*«Your team has no devices from
+  which to generate a provisioning profile»*) — su un account appena aperto non ce n'è nessuno, e il
+  runner non è un iPhone.
+- **Fallback automatico.** Se l'export dall'archivio non firmato dovesse fallire, lo stesso job
+  ri-archivia da solo con **firma automatica ad hoc** (`CODE_SIGN_IDENTITY=-` +
+  `AD_HOC_CODE_SIGNING_ALLOWED=YES` + `CODE_SIGN_STYLE=Automatic` + `DEVELOPMENT_TEAM`, la ricetta a
+  cui la DTS di Apple rimanda per la CI, quella di Xcode Cloud: firma con la pseudo-identità `-`,
+  quindi niente certificati, niente profili e niente dispositivi registrati, ma **con** gli
+  entitlement già generati in fase di archive) e riprova l'export. La firma di distribuzione resta
+  comunque compito di `-exportArchive`. Il riepilogo del run dice quale delle due strategie ha
+  funzionato; il timeout del job è a 90 minuti proprio per coprire il caso di due archive.
+- **Firma senza rompere il package SPM.** `project.yml` tiene la firma spenta per tutto il progetto
+  (serve a `ios.yml`). Il workflow TestFlight **non** passa a `xcodebuild` le `CODE_SIGN_*` vere:
+  qualsiasi impostazione sulla riga di comando vale per *tutti* i target del build, compresi
+  `GymCore`/`GymUI`/`GymFeatures` del package locale, ed è il modo classico di farli fallire
+  ("requires a development team", "profile doesn't match bundle id"). Passa invece cinque variabili
+  `GYM_*` (usate solo dal fallback), che solo il target `Gym` traduce in impostazioni di firma
+  (`CODE_SIGN_STYLE = $(GYM_CODE_SIGN_STYLE)` ecc.). Con i valori di default il comportamento è
+  identico a prima, quindi `ios.yml` non cambia.
+- **Numero di build**: secondi trascorsi dal 1° gennaio 2020 UTC (oggi ~2,1·10⁸). Sempre crescente,
+  unico al secondo, e soprattutto indipendente da `github.run_number`, che è un contatore **per
+  workflow**: quello di `ios.yml` e quello di `testflight.yml` si sovrapporrebbero. Resta un singolo
+  intero sotto il limite di App Store Connect. La **versione marketing** arriva da `project.yml`
+  (`MARKETING_VERSION`), oppure dal tag se il run parte da `vX.Y.Z`.
+- **Requisiti del binario** verificati automaticamente: icona 1024×1024 **senza canale alpha** (lo
+  step legge l'header del PNG), `CFBundleIconName` presente nel bundle costruito,
+  `ITSAppUsesNonExemptEncryption = false`, `LSRequiresIPhoneOS`, `CFBundleDisplayName`, orientamento
+  portrait, launch screen, versione/build coerenti. Non serve nessun `PrivacyInfo.xcprivacy`: l'app
+  non usa API "required reason" (niente `UserDefaults`, niente date di modifica dei file, niente
+  spazio su disco) e non ha SDK di terze parti.
+
+### 4. Aggiungere i tester interni
+
+I tester **interni** sono utenti del team App Store Connect: fino a 100 persone, 30 dispositivi a
+testa, e ricevono la build **appena finita l'elaborazione**, senza nessuna revisione di Apple.
+
+1. **Te stesso** sei già utente del team: non devi fare nulla.
+2. **La seconda persona**: [Utenti e accessi](https://appstoreconnect.apple.com/access/users) → **+**
+   → nome, cognome, email (dev'essere un **Apple Account** valido, la sua). Ruolo: **Developer** è
+   sufficiente per fare da tester interno; spunta l'accesso all'app. Riceve un invito da accettare.
+3. [TestFlight](https://appstoreconnect.apple.com/apps) → scheda **TestFlight** dell'app → *Test
+   interno* → **+** su "Gruppi" → nome del gruppo (p.es. `Interni`) → aggiungi entrambi i tester →
+   attiva **"Distribuisci automaticamente le build"**, così ogni nuovo upload parte da solo.
+4. Sull'iPhone: installare l'app **TestFlight** dall'App Store, aprire l'email di invito (o fare
+   *Riscatta* con il codice) e premere *Installa*. Gli aggiornamenti successivi arrivano lì dentro,
+   con notifica.
+
+Una nota: **"Cosa provare"** non è impostabile dalla riga di comando con i soli strumenti di Xcode.
+Il testo passato con `-f note="…"` finisce nel riepilogo del run su GitHub: lo si copia una volta in
+App Store Connect → TestFlight → build → *Cosa provare* (oppure si scrive una volta sola a livello di
+gruppo e non ci si pensa più).
+
+**Scadenza: 90 giorni.** Ogni build di TestFlight smette di funzionare 90 giorni dopo l'upload —
+l'app installata si rifiuta di partire e chiede di aggiornare. È l'unico "rinnovo" richiesto, ed è
+sei volte più comodo dei 7 giorni del sideload gratuito: basta rilanciare il workflow. Se una build
+scade e non se ne carica un'altra, i dati **restano** sul telefono (l'app non viene disinstallata).
+
+### 5. I cinque errori più probabili
+
+| errore | dove compare | rimedio |
+| --- | --- | --- |
+| `No profiles for 'it.mpinformatica.gymapp' were found` / `No signing certificate "Apple Distribution" found` | step *Firma di distribuzione ed export* (dopo che anche il fallback ha fallito) | La chiave API non ha il ruolo **Admin** (senza cui non può creare certificato e profilo), oppure l'App ID del punto 1a non è stato registrato. Rigenera la chiave con ruolo Admin e riaggiorna `ASC_KEY_ID`/`ASC_ISSUER_ID`/`ASC_KEY_P8`. |
+| `Unable to authenticate` / `error -1011` / `401 Unauthorized` | step *Carica su App Store Connect* | Key ID o Issuer ID sbagliati (si scambiano facilmente: il Key ID è corto, l'Issuer ID è un UUID), oppure il `.p8` è stato incollato a mano perdendo gli a capo. Ricaricalo **da file**: `gh secret set ASC_KEY_P8 < AuthKey_XXXXXXXXXX.p8`. |
+| `No suitable application records were found` / `Unable to find application` | step *Carica su App Store Connect* | Manca il record dell'app in App Store Connect (punto 1b) o il bundle id non coincide con `it.mpinformatica.gymapp`. |
+| `The bundle version must be higher than the previously uploaded version` / `Redundant binary upload` | step *Carica su App Store Connect* | Quel numero di build è già stato usato: succede solo se si è caricato a mano qualcosa con un build number più alto. Rilancia il workflow (il numero è basato sull'orologio, quindi al run successivo è già più grande); se il problema resta, è stata caricata a mano una build con un numero enorme e va alzata la `MARKETING_VERSION` in `project.yml`. |
+| `ITMS-90717: Invalid App Store Icon` (alpha) o `ITMS-90713: Missing CFBundleIconName` | step *checks* / *Controlla l'archivio* | Icona con trasparenza o asset catalog non compilato. Rigenera l'icona con `swift scripts/make_icon.swift` (lo script produce già un PNG opaco) e verifica che in `project.yml` resti `ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon`. |
+
+Se la build viene accettata ma **non compare** in TestFlight: è normale, l'elaborazione dura da 5 a
+30 minuti; se dopo un'ora non c'è, controlla l'email dell'Account Holder, dove Apple spedisce gli
+avvisi di binario rifiutato.
+
+### Fonti
+
+Verificate a settembre 2026:
+[Apple — Creating API Keys for App Store Connect API](https://developer.apple.com/documentation/appstoreconnectapi/creating-api-keys-for-app-store-connect-api)
+(chiavi del team vs individuali, «Individual keys aren't able to use Provisioning endpoints»,
+download del `.p8` una volta sola);
+[Apple — Program roles](https://developer.apple.com/support/roles/) (tabella dei permessi: certificati
+e profili di distribuzione solo ad Account Holder e Admin; *Upload builds* ad Account Holder, Admin e
+App Manager);
+[Apple — Upload builds](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds);
+[man page di `altool`](https://keith.github.io/xcode-man-pages/altool.1.html) (percorsi di ricerca del
+`.p8` e `$API_PRIVATE_KEYS_DIR`) e di
+[`xcodebuild`](https://keith.github.io/xcode-man-pages/xcodebuild.1.html)
+(`-allowProvisioningUpdates`, `-authenticationKeyPath/ID/IssuerID`);
+[FB9145847](https://openradar.appspot.com/FB9145847) (la destinazione `upload` di `-exportArchive`
+non usa la chiave API);
+[Apple Developer Forums — "How to make CI build with Xcode project with automatic
+signing?"](https://developer.apple.com/forums/thread/756119) (la DTS rimanda alla ricetta di Xcode
+Cloud: `CODE_SIGN_IDENTITY=-` + `AD_HOC_CODE_SIGNING_ALLOWED=YES` + `CODE_SIGN_STYLE=Automatic` +
+`DEVELOPMENT_TEAM`, senza dispositivi registrati);
+[Apple Developer Forums — conflicting provisioning settings](https://developer.apple.com/forums/thread/724582);
+[Apple TN3187 — Migrating to the UIKit scene-based life cycle](https://developer.apple.com/documentation/technotes/tn3187-migrating-to-the-uikit-scene-based-life-cycle);
+[Apple — Describing use of required reason API](https://developer.apple.com/documentation/bundleresources/describing-use-of-required-reason-api).
+
+---
+
 ## Installare l'IPA non firmata sull'iPhone (gratis, da macOS, senza Xcode)
 
 L'IPA prodotta dalla CI **non è firmata**: da sola non si installa. La si firma sul Mac con il
