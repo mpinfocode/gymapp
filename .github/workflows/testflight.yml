@@ -448,9 +448,11 @@ jobs:
           leggi() { /usr/libexec/PlistBuddy -c "Print :$1" "$APP/Info.plist" 2>/dev/null || true; }
 
           mancanti=""
-          # CFBundleIconName è inserito da actool a partire dall'asset catalog:
+          # CFBundleIconName è inserito da actool a partire dall'asset catalog,
+          # ANNIDATO in CFBundleIcons:CFBundlePrimaryIcon (non al primo livello):
           # se manca, App Store Connect risponde ITMS-90713.
-          for chiave in CFBundleIdentifier CFBundleDisplayName CFBundleIconName \
+          for chiave in CFBundleIdentifier CFBundleDisplayName \
+                        CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName \
                         CFBundleShortVersionString CFBundleVersion \
                         LSRequiresIPhoneOS MinimumOSVersion; do
             if [ -z "$(leggi "$chiave")" ]; then
