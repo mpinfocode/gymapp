@@ -117,6 +117,28 @@ func makeScenes(full: AppEnvironment, empty: AppEnvironment) -> [SnapshotScene] 
         SnapshotScene("scheda-archivio", height: deviceHeight, settle: 2.5,
                       view: ProgramVariantScene(variant: .archive)),
 
+        // Scheda con l'AI: la scelta all'ingresso e i momenti del wizard.
+        SnapshotScene("ai-scelta", height: deviceHeight, settle: 2.5,
+                      view: GeneratorVariantScene(variant: .choice)),
+        SnapshotScene("ai-domanda-obiettivo", height: deviceHeight, settle: 2.5,
+                      view: GeneratorVariantScene(variant: .question(1))),
+        SnapshotScene("ai-domanda-divisione", height: deviceHeight, settle: 2.5,
+                      view: GeneratorVariantScene(variant: .question(3))),
+        SnapshotScene("ai-domanda-proteggere", height: deviceHeight, settle: 2.5,
+                      view: GeneratorVariantScene(variant: .question(8))),
+        SnapshotScene("ai-riepilogo", height: deviceHeight, settle: 2.5,
+                      view: GeneratorVariantScene(variant: .summary)),
+        SnapshotScene("ai-attesa", height: deviceHeight, settle: 2,
+                      view: GeneratorVariantScene(variant: .waiting)),
+        SnapshotScene("ai-senza-chiave", height: deviceHeight, settle: 2.5,
+                      view: GeneratorVariantScene(variant: .missingKey)),
+        SnapshotScene("ai-errore", height: deviceHeight, settle: 2.5,
+                      view: GeneratorVariantScene(variant: .failure)),
+        SnapshotScene("ai-anteprima", height: 2300, settle: 6,
+                      view: GeneratorVariantScene(variant: .preview)),
+        SnapshotScene("ai-anteprima-scuro", height: 2300, dark: true, settle: 6,
+                      view: GeneratorVariantScene(variant: .preview)),
+
         // Muscoli colpiti: la ripartizione della scheda.
         SnapshotScene("muscoli-riepilogo", height: 580, settle: 2.5, view: MusclesScene(variant: .summary)),
         SnapshotScene("muscoli-giorno", height: 400, settle: 2.5, view: MusclesScene(variant: .day)),

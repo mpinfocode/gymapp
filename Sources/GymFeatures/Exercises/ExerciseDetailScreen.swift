@@ -30,6 +30,12 @@ public enum ExerciseDetailPurpose {
     case plan(PlanItemContext)
     /// Aperto dentro il picker: si guarda la GIF e si conferma con un bottone.
     case picking(isAdded: Bool, add: () -> Void)
+    /// Sola consultazione dentro una sheet: si guarda e si chiude.
+    ///
+    /// La usa l'anteprima della scheda generata: lì la scheda non esiste ancora,
+    /// quindi non c'è nessuna prescrizione da mostrare e nessun giorno a cui
+    /// aggiungere l'esercizio.
+    case reference
 }
 
 /// Dettaglio di un esercizio: GIF, zone colpite, attrezzo, preferito, istruzioni
@@ -115,6 +121,9 @@ public struct ExerciseDetailScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
                 if case .picking = purpose {
+                    backBar
+                }
+                if case .reference = purpose {
                     backBar
                 }
 
@@ -281,7 +290,7 @@ public struct ExerciseDetailScreen: View {
                     dismiss()
                 }
             }
-        case .plan:
+        case .plan, .reference:
             EmptyView()
         }
     }

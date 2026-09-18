@@ -178,9 +178,15 @@ struct CircleIconButton: View {
 
 /// Menu "…": stessa forma del ``CircleIconButton``, per le azioni secondarie di una
 /// testata o di una riga.
+///
+/// `systemImage` esiste per un caso solo: nella tab Scheda il "+" della testata
+/// deve poter offrire due azioni diverse ("Nuova scheda" e "Nuovo giorno") senza
+/// diventare un secondo bottone. La forma resta quella, cambia l'icona.
 struct EllipsisMenu<Content: View>: View {
 
     var accessibilityTitle: String = "Altre azioni"
+    /// Icona del cerchio: "ellipsis" di default.
+    var systemImage: String = "ellipsis"
     /// Riempimento del cerchio: bianco sopra il gradiente di una card, grigio sul
     /// fondo di pagina.
     var background: Color = Theme.surface
@@ -190,7 +196,7 @@ struct EllipsisMenu<Content: View>: View {
         Menu {
             content
         } label: {
-            Image(systemName: "ellipsis")
+            Image(systemName: systemImage)
                 .font(.system(.body, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .frame(width: Theme.Size.minTapTarget, height: Theme.Size.minTapTarget)

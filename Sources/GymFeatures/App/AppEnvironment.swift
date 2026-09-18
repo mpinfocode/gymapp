@@ -57,19 +57,34 @@ public final class AppEnvironment {
     /// Fase di caricamento della libreria esercizi.
     public private(set) var phase: LibraryPhase
 
+    /// Stato della chiave OpenRouter e modello scelto ("scheda con l'AI").
+    ///
+    /// Il default monta un Portachiavi **in memoria**: gli strumenti
+    /// (`GymSnapshots`, `GymPreview`) non devono poter toccare il Portachiavi
+    /// vero. Solo ``makeDefault()`` monta quello di sistema.
+    public let ai: AIPreferences
+
     /// - Parameters:
     ///   - store: store già costruito (directory iniettabile, data "adesso" iniettabile).
     ///   - phase: passare `.ready` quando lo store è già popolato e non serve chiamare ``start()``.
     ///   - router: router condiviso; di norma quello di default.
-    public init(store: AppStore, phase: LibraryPhase = .loading, router: Router = Router()) {
+    ///   - ai: chiave e modello; di default un Portachiavi finto in memoria.
+    public init(
+        store: AppStore,
+        phase: LibraryPhase = .loading,
+        router: Router = Router(),
+        ai: AIPreferences = AIPreferences()
+    ) {
         self.store = store
         self.phase = phase
         self.router = router
+        self.ai = ai
     }
 
-    /// Ambiente dell'app reale: dati in `Application Support/GymApp/`.
+    /// Ambiente dell'app reale: dati in `Application Support/GymApp/`, chiave nel
+    /// Portachiavi di sistema.
     public static func makeDefault() throws -> AppEnvironment {
-        AppEnvironment(store: try AppStore.makeDefault())
+        AppEnvironment(store: try AppStore.makeDefault(), ai: .makeDefault())
     }
 
     // MARK: - Scorciatoie di lettura

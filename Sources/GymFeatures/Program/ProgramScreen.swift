@@ -12,8 +12,11 @@ public struct ProgramScreen: View {
 
     @Environment(AppEnvironment.self) private var app
 
-    /// Sheet di creazione o modifica dei dettagli.
-    @State private var form: ProgramFormSheet.Mode?
+    /// Sheet aperta al momento (scelta, form manuale, wizard con l'AI).
+    @State private var creation: ProgramCreationRoute?
+    /// Sheet da aprire appena quella corrente si è chiusa: due sheet non possono
+    /// sostituirsi a vicenda mentre sono a schermo.
+    @State private var pendingCreation: ProgramCreationRoute?
     @State private var confirmsDeletion = false
 
     private static let topAnchor = "program-top"
@@ -39,8 +42,8 @@ public struct ProgramScreen: View {
             }
         }
         .pageBackground()
-        .sheet(item: $form) { mode in
-            ProgramFormSheet(mode: mode)
+        .sheet(item: $creation, onDismiss: openPendingCreation) { route in
+            creationSheet(route)
         }
         .alert("Eliminare la scheda?", isPresented: $confirmsDeletion) {
             Button("Annulla", role: .cancel) {}
@@ -61,9 +64,15 @@ public struct ProgramScreen: View {
             // già la card), una sola azione a destra ("+", il giorno nuovo: è
             // l'unica cosa che si fa spesso qui). Il resto resta nel menu "…"
             // della card.
+            // Il "+" è un menu con due voci scritte per esteso. Prima era un
+            // bottone secco che aggiungeva un GIORNO: chi lo toccava aspettandosi
+            // una scheda nuova si trovava un giorno in più senza capire perché.
+            // Due etichette tolgono l'ambiguità senza aggiungere un secondo
+            // bottone alla testata (una sola azione a destra, vedi PageHeader).
             PageHeader(title: "Scheda") {
-                CircleIconButton(systemImage: "plus", accessibilityTitle: "Aggiungi un giorno") {
-                    addDay(to: program)
+                EllipsisMenu(accessibilityTitle: "Aggiungi", systemImage: "plus") {
+                    Button("Nuova scheda") { startCreation() }
+                    Button("Nuovo giorno") { addDay(to: program) }
                 }
             }
 
@@ -99,7 +108,7 @@ public struct ProgramScreen: View {
             }
 
             EllipsisMenu(accessibilityTitle: "Azioni sulla scheda", background: Theme.surfaceElevated) {
-                Button("Modifica i dettagli") { form = .edit(program.id) }
+                Button("Modifica i dettagli") { creation = .details(program.id) }
                 Button("Duplica come nuova scheda") {
                     app.store.duplicateProgram(id: program.id, activate: false)
                 }
@@ -221,9 +230,11 @@ public struct ProgramScreen: View {
 
     private var empty: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Senza scheda non esistono giorni da aggiungere: qui il "+" ha un
+            // significato solo e resta un bottone semplice.
             PageHeader(title: "Scheda") {
                 CircleIconButton(systemImage: "plus", accessibilityTitle: "Crea la tua scheda") {
-                    form = .create
+                    startCreation()
                 }
             }
             emptyBody
@@ -237,7 +248,7 @@ public struct ProgramScreen: View {
                 title: "Nessuna scheda",
                 message: "Ricopia qui la scheda dell'istruttore: giorni, esercizi, serie e carichi.",
                 actionTitle: "Crea la tua scheda",
-                action: { form = .create }
+                action: { startCreation() }
             )
 
             Button {
@@ -255,5 +266,69 @@ public struct ProgramScreen: View {
         }
         .padding(.horizontal, Theme.Spacing.page)
         .padding(.top, Theme.Spacing.xxxl)
+    }
+
+    // MARK: - Creazione di una scheda
+
+    /// Apre la scelta fra "Manuale" e "Con l'AI".
+    private func startCreation() {
+        creation = .choice
+    }
+
+    /// Una sheet non può sostituirne un'altra mentre è a schermo: la scelta si
+    /// chiude e quella dopo si apre qui, alla sua chiusura.
+    private func openPendingCreation() {
+        guard let pendingCreation else { return }
+        self.pendingCreation = nil
+        creation = pendingCreation
+    }
+
+    @ViewBuilder
+    private func creationSheet(_ route: ProgramCreationRoute) -> some View {
+        switch route {
+        case .choice:
+            ProgramCreationChoiceSheet(
+                onManual: {
+                    pendingCreation = .manual
+                    creation = nil
+                },
+                onAssisted: {
+                    pendingCreation = .assisted
+                    creation = nil
+                }
+            )
+        case .manual:
+            ProgramFormSheet(mode: .create)
+        case .details(let id):
+            ProgramFormSheet(mode: .edit(id))
+        case .assisted:
+            GeneratorWizardSheet {
+                // Salvata: la scheda si guarda in Home, che è la schermata da
+                // palestra (SPEC §0).
+                app.router.tab = .home
+            }
+            .fullHeightSheet()
+        }
+    }
+}
+
+/// Le sheet che partono dalla tab Scheda per creare o modificare una scheda.
+private enum ProgramCreationRoute: Hashable, Identifiable {
+    /// Manuale o con l'AI.
+    case choice
+    /// Form manuale, scheda nuova.
+    case manual
+    /// Wizard "crea scheda con l'AI".
+    case assisted
+    /// Dettagli di una scheda esistente.
+    case details(UUID)
+
+    var id: String {
+        switch self {
+        case .choice: "choice"
+        case .manual: "manual"
+        case .assisted: "assisted"
+        case .details(let id): id.uuidString
+        }
     }
 }

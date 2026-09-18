@@ -48,6 +48,14 @@ enum MockData {
             populate(store: store, clock: clock)
             clock.date = now
         }
+        // Chiave finta nel Portachiavi **in memoria** dell'ambiente (mai quello
+        // vero): serve solo a fotografare la riga "Chiave salvata ····abcd"
+        // delle Impostazioni. Le ultime quattro cifre sono l'unica cosa che la
+        // UI mostra, quindi il valore qui non è un segreto.
+        await MainActor.run {
+            environment.ai.saveKey("sk-or-v1-finta-per-gli-screenshot-abcd")
+            environment.ai.refresh()
+        }
         return environment
     }
 

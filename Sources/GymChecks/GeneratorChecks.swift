@@ -427,15 +427,24 @@ private func runGeneratorSchemaChecks(_ harness: Harness) {
     harness.check("lo schema è un oggetto", schema["type"] as? String == "object")
     harness.check("lo schema vieta le proprietà in più", schema["additionalProperties"] as? Bool == false)
     let required = schema["required"] as? [String] ?? []
-    harness.check("lo schema richiede nome e giorni", required.sorted() == ["days", "name"])
+    harness.check("lo schema richiede il nome e gli elenchi di id", required.sorted() == ["d", "n"])
 
     // Stabilità: lo schema è parte del contratto con il servizio di inferenza,
     // un cambio silenzioso romperebbe le chiamate in produzione.
     let normalized = GeneratorPrompt.jsonSchema
         .split(whereSeparator: \.isWhitespace)
         .joined()
-    harness.check("lo schema contiene i campi previsti per ogni voce", normalized.contains("\"required\":[\"id\",\"sets\",\"repsMin\",\"repsMax\",\"seconds\",\"rest\",\"note\"]"))
-    harness.check("i campi facoltativi ammettono null", normalized.contains("\"repsMin\":{\"type\":[\"integer\",\"null\"]}"))
+    harness.check(
+        "lo schema chiede elenchi di stringhe, uno per giorno",
+        normalized.contains("\"d\":{\"type\":\"array\",\"items\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}}")
+    )
+    harness.check("il nome della scheda è una stringa", normalized.contains("\"n\":{\"type\":\"string\"}"))
+    // La modalità stretta dei fornitori accetta pochi costrutti: niente unioni
+    // con null, niente vincoli di cardinalità, niente descrizioni.
+    harness.check(
+        "lo schema resta banale (nessun costrutto che i fornitori rifiutano)",
+        !normalized.contains("null") && !normalized.contains("minItems") && !normalized.contains("description")
+    )
     harness.check("lo schema ha un nome stabile", GeneratorPrompt.schemaName == "gym_program")
 
     // Una bozza reale deve essere accettata dalla forma dichiarata.
@@ -456,5 +465,9 @@ private func runGeneratorSchemaChecks(_ harness: Harness) {
     harness.check(
         "il prompt di sistema non contiene trattini lunghi",
         !GeneratorPrompt.system.contains("—") && !GeneratorPrompt.system.contains("–")
+    )
+    harness.check(
+        "il prompt di sistema dice che i numeri non li scrive il modello",
+        GeneratorPrompt.system.contains("li calcola l'app")
     )
 }

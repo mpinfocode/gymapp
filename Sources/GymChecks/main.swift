@@ -29,6 +29,8 @@ await runCustomExerciseChecks(harness, repository: repository)
 await runBackupChecks(harness, repository: repository)
 runGeneratorPoolChecks(harness, repository: repository)
 runGeneratorChecks(harness, repository: repository)
+await runGeneratorServiceChecks(harness, repository: repository)
+await runGeneratorClientChecks(harness, repository: repository)
 await runPerformanceChecks(harness, repository: repository)
 
 await runPerformanceBenchmark(repository: repository)

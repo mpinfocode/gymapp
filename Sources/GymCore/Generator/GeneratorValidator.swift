@@ -211,9 +211,14 @@ public enum GeneratorValidator {
             var day = result.days[dayIndex]
             let label = day.name.isEmpty ? "Giorno \(dayIndex + 1)" : day.name
 
+            // Nel formato compatto il modello manda solo gli id: il nome del
+            // giorno lo decide il telefono ed è previsto che manchi, quindi non
+            // si segnala come correzione di un errore.
+            let isCompactDay = !day.items.isEmpty && day.items.allSatisfy(\.isUnspecified)
+
             if day.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 day.name = parameters.days.indices.contains(dayIndex) ? parameters.days[dayIndex].name : "Giorno \(dayIndex + 1)"
-                repairs.append("Dato un nome al giorno \(dayIndex + 1).")
+                if !isCompactDay { repairs.append("Dato un nome al giorno \(dayIndex + 1).") }
             } else if day.name.contains(where: forbiddenDashes.contains) {
                 day.name = sanitizeDashes(day.name)
                 repairs.append("\(label): tolto un trattino lungo dal nome.")
@@ -235,6 +240,15 @@ public enum GeneratorValidator {
                     repairs.append("\(label): tolto \(candidate.shortName), sollecita una zona da proteggere.")
                     seen.remove(item.id)
                     continue
+                }
+
+                // Formato compatto: il modello ha mandato solo l'id, i numeri
+                // li mette il telefono. Non è una correzione di un errore del
+                // modello, quindi non finisce nell'elenco delle riparazioni:
+                // altrimenti l'utente vedrebbe quaranta righe che dicono la
+                // stessa cosa ovvia.
+                if item.isUnspecified {
+                    item = numbers(for: candidate, parameters: parameters)
                 }
 
                 if !setsRange.contains(item.sets) {
@@ -299,6 +313,28 @@ public enum GeneratorValidator {
         }
 
         return (result, repairs)
+    }
+
+    /// I numeri di una voce di cui il modello ha mandato solo l'id.
+    ///
+    /// Sono gli stessi numeri che userebbe la scheda di riserva: serie,
+    /// ripetizioni e recupero secondo obiettivo ed esperienza, durata al posto
+    /// delle ripetizioni per plank e cardio. Così una scheda scelta dall'AI e
+    /// una costruita dal telefono hanno la stessa programmazione, e l'unica
+    /// differenza è la scelta degli esercizi.
+    static func numbers(
+        for candidate: GeneratorCandidate,
+        parameters: GeneratorPlanParameters
+    ) -> GeneratedProgramDraft.Item {
+        if candidate.pattern == .cardio {
+            return GeneratedProgramDraft.Item(
+                id: candidate.id,
+                sets: 1,
+                seconds: (parameters.cardioSeconds ?? 600).clamped(to: secondsRange),
+                rest: 60
+            )
+        }
+        return FallbackProgramGenerator.makeItem(for: candidate, parameters: parameters)
     }
 
     /// Multiarticolari prima degli isolamenti, mantenendo l'ordine originale

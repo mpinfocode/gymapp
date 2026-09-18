@@ -6,10 +6,14 @@ import GymCore
 // mette e se la scheda che produce sta in piedi.
 //
 //   swift run GymGeneratorTest --fallback                 (senza chiave, solo il generatore deterministico)
+//   swift run GymGeneratorTest --quick                    (3 scenari, 3 modelli veloci: meno di un minuto per modello)
 //   swift run GymGeneratorTest                            (tutti gli scenari, modelli di default)
-//   swift run GymGeneratorTest --model openai/gpt-5-nano --scenario 3g-ppl-intermedio
+//   swift run GymGeneratorTest --model openai/gpt-4.1-nano --scenario 3g-fullbody
 //
 // La chiave non viene MAI stampata, salvata o inclusa nei rapporti.
+//
+// Il rapporto si riscrive dopo OGNI prova: se si interrompe la batteria a metà
+// (o se un modello resta appeso) quel che è stato misurato resta su disco.
 
 // MARK: - Argomenti
 
@@ -18,6 +22,7 @@ struct Options {
     var scenarios: [String] = []
     var runs = 1
     var fallbackOnly = false
+    var quick = false
     var outputDirectory: String?
     var keyFile: String?
     var showPool = false
@@ -59,6 +64,8 @@ func parseOptions(_ arguments: [String]) -> OptionParsing {
             options.keyFile = path
         case "--fallback":
             options.fallbackOnly = true
+        case "--quick":
+            options.quick = true
         case "--pool":
             options.showPool = true
         case "--help", "-h":
@@ -74,6 +81,8 @@ func parseOptions(_ arguments: [String]) -> OptionParsing {
 let usage = """
 GymGeneratorTest · banco di prova del generatore di schede
 
+  --quick            batteria rapida: \(Scenarios.quickNames.count) scenari, meno di un minuto per modello
+                     (\(Scenarios.quickNames.joined(separator: ", ")))
   --model <id>       modello OpenRouter da provare, ripetibile
                      (default: \(ModelPricing.defaultModels.joined(separator: ", ")))
   --scenario <nome>  scenario da provare, ripetibile (default: tutti)
@@ -85,11 +94,38 @@ GymGeneratorTest · banco di prova del generatore di schede
   --key-file <path>  file alternativo con la chiave
   --help             questo testo
 
+I modelli si provano dal più veloce. Un modello viene abbandonato dopo due
+fallimenti consecutivi dello stesso tipo: non ha senso spenderci altri minuti.
+
 Scenari disponibili:
 \(Scenarios.all.map { "  \($0.name.padding(toLength: 24, withPad: " ", startingAt: 0))\($0.title)" }.joined(separator: "\n"))
 """
 
 // MARK: - Esito di una prova
+
+/// Come è andata male, quando è andata male. Serve a fermare un modello che
+/// sbaglia sempre allo stesso modo.
+enum FailureKind: String, Sendable {
+    case none
+    case timeout = "tempo scaduto"
+    case emptyReasoning = "risposta vuota (ha ragionato)"
+    case truncated = "risposta troncata"
+    case http = "errore del servizio"
+    case network = "rete"
+    case unreadable = "risposta illeggibile"
+    case invalid = "scheda non valida"
+
+    static func of(_ failure: OpenRouterClient.Failure) -> FailureKind {
+        switch failure {
+        case .timeout: .timeout
+        case .emptyContentReasoningExhausted, .emptyResponse: .emptyReasoning
+        case .truncated: .truncated
+        case .transport: .network
+        case .malformedResponse: .unreadable
+        default: .http
+        }
+    }
+}
 
 struct Attempt {
     let scenario: Scenario
@@ -98,14 +134,18 @@ struct Attempt {
     let seconds: Double
     let usage: OpenRouterClient.Usage?
     let cost: Double?
+    let finishReason: String?
+    let provider: String?
     let validation: GeneratorValidation?
     let repairs: [String]
     let quality: QualityReport?
     let draftLines: [String]
     let error: String?
+    let failureKind: FailureKind
     let usedSchema: Bool
 
     var succeeded: Bool { error == nil && validation?.isValid == true }
+    var isAI: Bool { model != "fallback" }
 }
 
 // MARK: - Avvio
@@ -132,9 +172,7 @@ let outputDirectory = URL(
 try? FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
 let chosenScenarios: [Scenario]
-if options.scenarios.isEmpty {
-    chosenScenarios = Scenarios.all
-} else {
+if !options.scenarios.isEmpty {
     var collected: [Scenario] = []
     for name in options.scenarios {
         guard let scenario = Scenarios.named(name) else {
@@ -145,9 +183,13 @@ if options.scenarios.isEmpty {
         collected.append(scenario)
     }
     chosenScenarios = collected
+} else if options.quick {
+    chosenScenarios = Scenarios.quick
+} else {
+    chosenScenarios = Scenarios.all
 }
 
-print("GymGeneratorTest · \(chosenScenarios.count) scenari")
+print("GymGeneratorTest · \(chosenScenarios.count) scenari\(options.quick ? " (batteria rapida)" : "")")
 
 let repository: ExerciseRepository
 do {
@@ -166,12 +208,11 @@ if options.showPool {
     for group in MuscleGroup.displayOrder where group != .other {
         let ofGroup = resolved.filter { $0.group == group }
         guard !ofGroup.isEmpty else { continue }
-        let gym = ofGroup.count
         let home = ofGroup.filter { $0.equipmentClass.rank <= EquipmentClass.dumbbellBench.rank }.count
         let body = ofGroup.filter { $0.equipmentClass == .bodyweightBands }.count
         print("  " + group.displayName.padding(toLength: 15, withPad: " ", startingAt: 0)
             + String(format: "%5d", ofGroup.count)
-            + String(format: "%10d", gym)
+            + String(format: "%10d", ofGroup.count)
             + String(format: "%15d", home)
             + String(format: "%14d", body))
     }
@@ -206,9 +247,21 @@ if !options.fallbackOnly {
     }
 }
 
-let models = options.models.isEmpty ? ModelPricing.defaultModels : options.models
+let models = ModelPricing.sortedBySpeed(options.models.isEmpty ? ModelPricing.defaultModels : options.models)
 let client = OpenRouterClient()
 var attempts: [Attempt] = []
+
+let reportURL = outputDirectory.appendingPathComponent("rapporto.md")
+
+/// Riscrive il rapporto da zero con quello che si sa finora.
+///
+/// Si chiama dopo ogni singola prova: una batteria interrotta a metà lascia
+/// comunque sul disco tutto quel che ha misurato.
+@MainActor
+func writeReport() {
+    let text = Report.make(attempts: attempts, quick: options.quick, models: models)
+    try? text.write(to: reportURL, atomically: true, encoding: .utf8)
+}
 
 // MARK: - Il generatore deterministico, sempre
 
@@ -245,7 +298,9 @@ for scenario in chosenScenarios {
     )
 
     print("\n--- \(scenario.name): \(scenario.title)")
-    print("Candidati: \(candidates.count) · prompt stimato: \(promptTokens) token")
+    print("Candidati: \(candidates.count) · prompt stimato: \(promptTokens) token"
+        + " · risposta attesa: ~\(Report.expectedReplyTokens(parameters: parameters)) token"
+        + " (tetto \(GeneratorPrompt.outputTokenBudget(parameters: parameters)))")
     print(DraftFormatter.lines(draft: draft, candidates: candidates).joined(separator: "\n"))
     print("Validatore: \(validation.isValid ? "valido" : "NON valido")")
     for error in validation.errors { print("  ! \(error)") }
@@ -263,22 +318,36 @@ for scenario in chosenScenarios {
             seconds: 0,
             usage: nil,
             cost: 0,
+            finishReason: nil,
+            provider: nil,
             validation: validation,
             repairs: [],
             quality: quality,
             draftLines: DraftFormatter.lines(draft: draft, candidates: candidates),
             error: nil,
+            failureKind: .none,
             usedSchema: false
         )
     )
 }
+writeReport()
 
 // MARK: - Le chiamate vere
 
 if !options.fallbackOnly, let apiKey {
     for model in models {
+        let price = ModelPricing.table[model]
         print("\n=== Modello \(model) ===")
-        for scenario in chosenScenarios {
+        print("Ragionamento richiesto: \(ModelPricing.reasoningLabel(model))"
+            + (price.map { " · ragiona di suo: \($0.reasoning.rawValue) · \($0.note)" } ?? ""))
+
+        // Due fallimenti di fila dello stesso tipo e si passa oltre: un modello
+        // che risponde vuoto lo farà anche la terza volta, e ogni tentativo
+        // costa fino a 25 secondi di attesa.
+        var lastFailure = FailureKind.none
+        var consecutive = 0
+
+        scenarioLoop: for scenario in chosenScenarios {
             for run in 1...options.runs {
                 let parameters = GeneratorPlanParameters(answers: scenario.answers)
                 let candidates = GeneratorCandidates.make(
@@ -292,10 +361,15 @@ if !options.fallbackOnly, let apiKey {
                     parameters: parameters,
                     candidates: candidates
                 )
+                let maxTokens = GeneratorPrompt.outputTokenBudget(parameters: parameters)
+                // La scadenza è quella vera dell'app: 40 secondi in tutto,
+                // ripiego sullo schema compreso.
+                let deadline = OpenRouterClient.Deadline()
 
                 let started = Date()
                 var completion: OpenRouterClient.Completion?
                 var failure: String?
+                var kind = FailureKind.none
                 var usedSchema = true
 
                 do {
@@ -303,7 +377,9 @@ if !options.fallbackOnly, let apiKey {
                         system: systemPrompt,
                         user: userPrompt,
                         model: model,
-                        apiKey: apiKey.value
+                        apiKey: apiKey.value,
+                        maxTokens: maxTokens,
+                        deadline: deadline
                     )
                 } catch let error as OpenRouterClient.Failure {
                     if OpenRouterClient.shouldRetryWithoutSchema(error) {
@@ -315,41 +391,66 @@ if !options.fallbackOnly, let apiKey {
                                 user: userPrompt,
                                 model: model,
                                 apiKey: apiKey.value,
-                                responseFormat: .jsonObject
+                                responseFormat: .jsonObject,
+                                maxTokens: maxTokens,
+                                deadline: deadline
                             )
+                        } catch let second as OpenRouterClient.Failure {
+                            failure = second.description
+                            kind = FailureKind.of(second)
                         } catch {
-                            failure = String(describing: error)
+                            failure = "errore inatteso: \(error.localizedDescription)"
+                            kind = .http
                         }
                     } else {
                         failure = error.description
+                        kind = FailureKind.of(error)
                     }
                 } catch {
                     failure = "errore inatteso: \(error.localizedDescription)"
+                    kind = .http
                 }
 
                 let elapsed = Date().timeIntervalSince(started)
-                let label = "\(scenario.name) · \(model) · prova \(run)"
-                print("\n--- \(label)")
-                print(String(format: "Tempo: %.2f s", elapsed))
+                print("\n--- \(scenario.name) · \(model) · prova \(run)")
 
                 guard let completion else {
+                    print(String(format: "Tempo: %.2f s · esito: %@", elapsed, kind.rawValue))
                     print("Errore: \(failure ?? "sconosciuto")")
                     attempts.append(
                         Attempt(
                             scenario: scenario, model: model, run: run, seconds: elapsed,
-                            usage: nil, cost: nil, validation: nil, repairs: [], quality: nil,
-                            draftLines: [], error: failure, usedSchema: usedSchema
+                            usage: nil, cost: nil, finishReason: nil, provider: nil,
+                            validation: nil, repairs: [], quality: nil,
+                            draftLines: [], error: failure, failureKind: kind, usedSchema: usedSchema
                         )
                     )
+                    writeReport()
+
+                    consecutive = kind == lastFailure ? consecutive + 1 : 1
+                    lastFailure = kind
+                    if consecutive >= 2 {
+                        print("\n  Due fallimenti di fila dello stesso tipo (\(kind.rawValue)): si abbandona \(model).")
+                        break scenarioLoop
+                    }
                     continue
                 }
 
+                lastFailure = .none
+                consecutive = 0
+
                 let cost = ModelPricing.cost(model: model, usage: completion.usage)
+                var line = String(format: "Tempo: %.2f s", elapsed)
+                line += " · finish_reason: \(completion.finishReason ?? "non dichiarato")"
                 if let usage = completion.usage {
-                    print("Token: \(usage.promptTokens) in, \(usage.completionTokens) out · costo stimato \(ModelPricing.formatCost(cost))")
+                    line += " · token: \(usage.promptTokens) in, \(usage.completionTokens) out"
+                    if usage.reasoningTokens > 0 { line += " (di cui \(usage.reasoningTokens) di ragionamento)" }
                 } else {
-                    print("Token: non dichiarati")
+                    line += " · token non dichiarati"
                 }
+                line += " · costo \(ModelPricing.formatCost(cost))"
+                if let provider = completion.provider { line += " · via \(provider)" }
+                print(line)
 
                 // La risposta grezza si salva: non contiene la chiave, solo il JSON.
                 let rawURL = outputDirectory.appendingPathComponent(
@@ -365,11 +466,19 @@ if !options.fallbackOnly, let apiKey {
                     attempts.append(
                         Attempt(
                             scenario: scenario, model: model, run: run, seconds: elapsed,
-                            usage: completion.usage, cost: cost, validation: nil, repairs: [],
+                            usage: completion.usage, cost: cost, finishReason: completion.finishReason,
+                            provider: completion.provider, validation: nil, repairs: [],
                             quality: nil, draftLines: [], error: String(describing: error),
-                            usedSchema: usedSchema
+                            failureKind: .unreadable, usedSchema: usedSchema
                         )
                     )
+                    writeReport()
+                    consecutive = lastFailure == .unreadable ? consecutive + 1 : 1
+                    lastFailure = .unreadable
+                    if consecutive >= 2 {
+                        print("\n  Due risposte illeggibili di fila: si abbandona \(model).")
+                        break scenarioLoop
+                    }
                     continue
                 }
 
@@ -408,11 +517,22 @@ if !options.fallbackOnly, let apiKey {
                 attempts.append(
                     Attempt(
                         scenario: scenario, model: model, run: run, seconds: elapsed,
-                        usage: completion.usage, cost: cost, validation: validation,
+                        usage: completion.usage, cost: cost, finishReason: completion.finishReason,
+                        provider: completion.provider, validation: validation,
                         repairs: repairs, quality: quality, draftLines: lines, error: nil,
-                        usedSchema: usedSchema
+                        failureKind: validation.isValid ? .none : .invalid, usedSchema: usedSchema
                     )
                 )
+                writeReport()
+
+                if !validation.isValid {
+                    consecutive = lastFailure == .invalid ? consecutive + 1 : 1
+                    lastFailure = .invalid
+                    if consecutive >= 2 {
+                        print("\n  Due schede non valide di fila: si abbandona \(model).")
+                        break scenarioLoop
+                    }
+                }
             }
         }
     }
@@ -420,75 +540,18 @@ if !options.fallbackOnly, let apiKey {
 
 // MARK: - Riepilogo
 
-print("\n=== Riepilogo ===")
-let header = "scenario".padding(toLength: 26, withPad: " ", startingAt: 0)
-    + "modello".padding(toLength: 30, withPad: " ", startingAt: 0)
-    + "valida  ripar.  costo       secondi"
-print(header)
-var summaryRows: [String] = [header]
-for attempt in attempts {
-    let valid: String
-    if attempt.error != nil {
-        valid = "errore"
-    } else {
-        valid = attempt.validation?.isValid == true ? "sì" : "no"
-    }
-    let row = attempt.scenario.name.padding(toLength: 26, withPad: " ", startingAt: 0)
-        + attempt.model.padding(toLength: 30, withPad: " ", startingAt: 0)
-        + valid.padding(toLength: 8, withPad: " ", startingAt: 0)
-        + String(attempt.repairs.count).padding(toLength: 8, withPad: " ", startingAt: 0)
-        + ModelPricing.formatCost(attempt.cost).padding(toLength: 12, withPad: " ", startingAt: 0)
-        + String(format: "%.2f", attempt.seconds)
-    print(row)
-    summaryRows.append(row)
-}
+let summary = Report.make(attempts: attempts, quick: options.quick, models: models)
+try? summary.write(to: reportURL, atomically: true, encoding: .utf8)
 
-// Rapporto su file
-var report = """
-# Prova del generatore di schede
-
-Eseguito il \(ISO8601DateFormatter().string(from: Date())).
-Prezzi dei modelli indicativi (vedi `ModelPricing`).
-La chiave OpenRouter non compare in questo file né nei JSON salvati.
-
-## Riepilogo
-
-```
-\(summaryRows.joined(separator: "\n"))
-```
-
-"""
-for attempt in attempts {
-    report += "\n## \(attempt.scenario.name) · \(attempt.model) · prova \(attempt.run)\n\n"
-    report += "\(attempt.scenario.title)\n\n"
-    if let error = attempt.error {
-        report += "Errore: \(error)\n"
-        continue
-    }
-    report += "```\n\(attempt.draftLines.joined(separator: "\n"))\n```\n\n"
-    if let validation = attempt.validation {
-        report += "Validatore: \(validation.isValid ? "valido" : "NON valido")\n\n"
-        for error in validation.errors { report += "- errore: \(error)\n" }
-        for warning in validation.warnings { report += "- rilievo: \(warning)\n" }
-    }
-    for repair in attempt.repairs { report += "- riparazione: \(repair)\n" }
-    if let quality = attempt.quality {
-        report += "\n"
-        for finding in quality.findings { report += "- \(finding.line)\n" }
-        report += "\n```\n\(quality.distributionLines.joined(separator: "\n"))\n```\n"
-    }
-}
-
-let reportURL = outputDirectory.appendingPathComponent("rapporto.md")
-try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+print("\n" + Report.consoleSummary(attempts: attempts, models: models))
 print("\nRapporto: \(reportURL.path)")
 
 let failed = attempts.filter { $0.error != nil || $0.validation?.isValid == false }
 if failed.isEmpty {
     print("Tutte le prove hanno prodotto una scheda valida.")
-    exit(0)
+} else {
+    print("\(failed.count) prove su \(attempts.count) non hanno prodotto una scheda valida.")
 }
-print("\(failed.count) prove su \(attempts.count) non hanno prodotto una scheda valida.")
 exit(0)
 
 extension String {

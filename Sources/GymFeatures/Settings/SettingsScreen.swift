@@ -24,6 +24,7 @@ public struct SettingsScreen: View {
                 header
                 sampleProgram
                 preferences
+                AISettingsSection()
                 offlineMedia
                 about
                 diagnostics
