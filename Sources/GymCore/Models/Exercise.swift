@@ -20,8 +20,19 @@ public struct Exercise: Codable, Sendable, Hashable, Identifiable {
     /// Uno dei 28 attrezzi del dataset, in inglese.
     public let equipment: String
     /// Muscolo bersaglio principale, in inglese.
+    ///
+    /// Per gli esercizi della libreria è il valore **corretto** da ``ExerciseCorrections``
+    /// (il JSON su disco resta quello upstream).
     public let target: String
-    /// Gruppo muscolare di appartenenza, in inglese.
+    /// - Warning: **Campo inaffidabile, non usarlo.** Nel dataset `muscle_group` è
+    ///   una copia del primo muscolo secondario su tutti e 1.324 i record (SPEC §2,
+    ///   punto 2). Resta pubblico solo per compatibilità e per il round-trip Codable:
+    ///   ricerca, filtri, facet e statistiche lo ignorano completamente.
+    ///   Per la zona colpita usa ``muscleGroupKind``; per il muscolo usa ``target``.
+    ///
+    ///   Non è marcato `@available(deprecated)` di proposito: farebbe scattare un
+    ///   warning anche nel round-trip Codable e nel codice che sta nascendo in
+    ///   parallelo, e la regola di progetto è "zero warning" (SPEC §6).
     public let muscleGroup: String
     /// Muscoli secondari coinvolti, in inglese.
     public let secondaryMuscles: [String]
@@ -33,6 +44,19 @@ public struct Exercise: Codable, Sendable, Hashable, Identifiable {
     public let gifPath: String
     /// Attribuzione dei media così com'è nel dataset; per la UI usa ``displayAttribution``.
     public let attribution: String
+    /// Nota libera dell'utente. Valorizzata solo dagli esercizi personalizzati.
+    public let notes: String
+    /// `true` se è un esercizio creato dall'utente (SPEC §2, punto 5).
+    ///
+    /// Gli esercizi personalizzati hanno id `custom-<uuid>`, nessuna GIF e nessuna
+    /// immagine; il flag resta vero anche se l'id venisse cambiato a mano.
+    public let isCustom: Bool
+    /// `true` se l'utente ha eliminato un esercizio personalizzato che però è citato
+    /// da una scheda o da una sessione.
+    ///
+    /// Soft delete: il record resta nello store con nome e dati, così lo **storico
+    /// non si rompe**; sparisce solo da ricerca, filtri e facet.
+    public let isDeleted: Bool
 
     public init(
         id: String,
@@ -46,7 +70,10 @@ public struct Exercise: Codable, Sendable, Hashable, Identifiable {
         steps: [String] = [],
         imagePath: String = "",
         gifPath: String = "",
-        attribution: String = Exercise.defaultAttribution
+        attribution: String = Exercise.defaultAttribution,
+        notes: String = "",
+        isCustom: Bool = false,
+        isDeleted: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -62,6 +89,9 @@ public struct Exercise: Codable, Sendable, Hashable, Identifiable {
         self.imagePath = imagePath
         self.gifPath = gifPath
         self.attribution = attribution
+        self.notes = notes
+        self.isCustom = isCustom || id.hasPrefix(Exercise.customIDPrefix)
+        self.isDeleted = isDeleted
     }
 
     /// Attribuzione da mostrare nella UI (dettaglio esercizio, Impostazioni, Crediti).
@@ -72,6 +102,127 @@ public struct Exercise: Codable, Sendable, Hashable, Identifiable {
 
     /// Attribuzione usata quando il record del dataset non ne porta una.
     public static let defaultAttribution = displayAttribution
+
+    // MARK: - Esercizi personalizzati
+
+    /// Prefisso degli id creati dall'utente (SPEC §2, punto 5).
+    public static let customIDPrefix = "custom-"
+
+    /// Id nuovo per un esercizio personalizzato (`custom-<uuid>`).
+    public static func makeCustomID() -> String { "\(customIDPrefix)\(UUID().uuidString.lowercased())" }
+
+    /// Crea un esercizio personalizzato: niente media, niente attribuzione Gym visual.
+    ///
+    /// - Parameters:
+    ///   - id: lasciarlo `nil` genera un `custom-<uuid>` nuovo.
+    ///   - category: una delle categorie del dataset (`upper legs`, `chest`, …) oppure
+    ///     stringa vuota; serve solo a far ricadere l'esercizio nei filtri per zona.
+    ///   - target: muscolo bersaglio in inglese, così le statistiche per gruppo
+    ///     muscolare lo sanno collocare (vedi ``MuscleGroup``).
+    public static func custom(
+        id: String? = nil,
+        name: String,
+        category: String = "",
+        equipment: String = "",
+        target: String = "",
+        secondaryMuscles: [String] = [],
+        notes: String = "",
+        isDeleted: Bool = false
+    ) -> Exercise {
+        Exercise(
+            id: id ?? makeCustomID(),
+            name: name,
+            category: category,
+            bodyPart: category,
+            equipment: equipment,
+            target: target,
+            muscleGroup: "",
+            secondaryMuscles: secondaryMuscles,
+            steps: [],
+            imagePath: "",
+            gifPath: "",
+            attribution: "",
+            notes: notes,
+            isCustom: true,
+            isDeleted: isDeleted
+        )
+    }
+
+    // MARK: - Varianti ridondanti
+
+    /// `true` per le varianti ridondanti del dataset: `"… v. 2"`, `"(male)"`,
+    /// `"(female)"`, `"(back pov)"`, `"(side pov)"` (SPEC §2, punto 4).
+    ///
+    /// Restano in libreria, ma nella ricerca, **a parità di punteggio**, finiscono
+    /// dopo la variante base.
+    public var isRedundantVariant: Bool { Exercise.isRedundantVariantName(name) }
+
+    /// Riconosce il nome di una variante ridondante.
+    ///
+    /// Lavora sul nome **normalizzato**, dove la punteggiatura è già sparita:
+    /// `"barbell rear lunge v. 2"` → `["barbell","rear","lunge","v","2"]`,
+    /// `"barbell full squat (back pov)"` → `[…,"back","pov"]`.
+    public static func isRedundantVariantName(_ name: String) -> Bool {
+        isRedundantVariant(nameTokens: SearchText.tokens(name))
+    }
+
+    static func isRedundantVariant(nameTokens tokens: [String]) -> Bool {
+        for (position, token) in tokens.enumerated() {
+            if token == "male" || token == "female" || token == "pov" { return true }
+            if token == "v", position + 1 < tokens.count, tokens[position + 1].allSatisfy(\.isNumber) { return true }
+        }
+        return false
+    }
+
+    /// `true` se l'esercizio è utilizzabile in ricerca, filtri e picker.
+    ///
+    /// Un personalizzato eliminato ma ancora citato dallo storico resta risolvibile
+    /// per id, però non deve più comparire nelle liste.
+    public var isSelectable: Bool { !isDeleted }
+
+    // MARK: - Copie
+
+    /// Copia con target e secondari sostituiti (usata da ``ExerciseCorrections``).
+    public func replacingMuscles(target: String, secondaryMuscles: [String]) -> Exercise {
+        Exercise(
+            id: id,
+            name: name,
+            category: category,
+            bodyPart: bodyPart,
+            equipment: equipment,
+            target: target,
+            muscleGroup: muscleGroup,
+            secondaryMuscles: secondaryMuscles,
+            steps: steps,
+            imagePath: imagePath,
+            gifPath: gifPath,
+            attribution: attribution,
+            notes: notes,
+            isCustom: isCustom,
+            isDeleted: isDeleted
+        )
+    }
+
+    /// Copia con il flag di soft delete cambiato.
+    public func markingDeleted(_ deleted: Bool) -> Exercise {
+        Exercise(
+            id: id,
+            name: name,
+            category: category,
+            bodyPart: bodyPart,
+            equipment: equipment,
+            target: target,
+            muscleGroup: muscleGroup,
+            secondaryMuscles: secondaryMuscles,
+            steps: steps,
+            imagePath: imagePath,
+            gifPath: gifPath,
+            attribution: attribution,
+            notes: notes,
+            isCustom: isCustom,
+            isDeleted: deleted
+        )
+    }
 
     // MARK: - Helper di presentazione
 
@@ -93,7 +244,9 @@ public struct Exercise: Codable, Sendable, Hashable, Identifiable {
     public var localizedEquipment: String { Localization.equipment(equipment) }
     /// Muscolo bersaglio tradotto in italiano.
     public var localizedTarget: String { Localization.muscle(target) }
-    /// Gruppo muscolare tradotto in italiano.
+    /// Traduzione italiana di ``muscleGroup``.
+    /// - Warning: **Non mostrarla nella UI**: `muscle_group` è un campo inaffidabile
+    ///   del dataset. Per la zona colpita usa ``localizedMuscleGroupKind``.
     public var localizedMuscleGroup: String { Localization.muscle(muscleGroup) }
     /// Muscoli secondari tradotti in italiano, senza duplicati e nell'ordine originale.
     public var localizedSecondaryMuscles: [String] { Localization.muscles(secondaryMuscles) }
@@ -129,6 +282,9 @@ public struct Exercise: Codable, Sendable, Hashable, Identifiable {
         case imagePath = "image"
         case gifPath = "gif_url"
         case attribution
+        case notes
+        case isCustom = "is_custom"
+        case isDeleted = "is_deleted"
     }
 
     /// Chiave della lingua usata nel dataset per le istruzioni.
@@ -150,6 +306,10 @@ public struct Exercise: Codable, Sendable, Hashable, Identifiable {
         imagePath = try container.decodeIfPresent(String.self, forKey: .imagePath) ?? ""
         gifPath = try container.decodeIfPresent(String.self, forKey: .gifPath) ?? ""
         attribution = try container.decodeIfPresent(String.self, forKey: .attribution) ?? Exercise.defaultAttribution
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        let decodedCustom = try container.decodeIfPresent(Bool.self, forKey: .isCustom) ?? false
+        isCustom = decodedCustom || id.hasPrefix(Exercise.customIDPrefix)
+        isDeleted = try container.decodeIfPresent(Bool.self, forKey: .isDeleted) ?? false
         // `body_part` manca in alcune varianti del dataset: ricade sulla categoria.
         let decodedBodyPart = try container.decodeIfPresent(String.self, forKey: .bodyPart)
         bodyPart = (decodedBodyPart?.isEmpty == false) ? decodedBodyPart! : category
@@ -174,5 +334,10 @@ public struct Exercise: Codable, Sendable, Hashable, Identifiable {
         try container.encode(imagePath, forKey: .imagePath)
         try container.encode(gifPath, forKey: .gifPath)
         try container.encode(attribution, forKey: .attribution)
+        // Campi nostri: si scrivono solo quando dicono qualcosa, così il file degli
+        // esercizi personalizzati resta leggibile e il formato del dataset immutato.
+        if !notes.isEmpty { try container.encode(notes, forKey: .notes) }
+        if isCustom { try container.encode(true, forKey: .isCustom) }
+        if isDeleted { try container.encode(true, forKey: .isDeleted) }
     }
 }

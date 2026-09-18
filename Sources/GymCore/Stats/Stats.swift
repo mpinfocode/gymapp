@@ -177,11 +177,18 @@ public enum Stats {
         exercisesByID: [String: Exercise] = [:],
         calendar: Calendar = weekCalendar()
     ) -> [WeekSummary] {
-        var byWeek: [Date: (workouts: Int, volume: Double, seconds: TimeInterval, sets: Int, categories: [String: Int])] = [:]
+        var byWeek: [Date: (
+            workouts: Int,
+            volume: Double,
+            seconds: TimeInterval,
+            sets: Int,
+            categories: [String: Int],
+            groups: [MuscleGroup: Int]
+        )] = [:]
 
         for session in sessions {
             guard let weekStart = startOfWeek(for: session.startedAt, calendar: calendar) else { continue }
-            var bucket = byWeek[weekStart] ?? (0, 0, 0, 0, [:])
+            var bucket = byWeek[weekStart] ?? (0, 0, 0, 0, [:], [:])
             bucket.workouts += 1
             bucket.volume += session.totalVolumeKg
             bucket.seconds += session.duration
@@ -189,9 +196,11 @@ public enum Stats {
             for entry in session.entries {
                 let completed = entry.sets.reduce(0) { $0 + ($1.isCompleted ? 1 : 0) }
                 guard completed > 0 else { continue }
-                let category = exercisesByID[entry.exerciseID]?.category ?? ""
-                guard !category.isEmpty else { continue }
-                bucket.categories[category, default: 0] += completed
+                guard let exercise = exercisesByID[entry.exerciseID] else { continue }
+                if !exercise.category.isEmpty {
+                    bucket.categories[exercise.category, default: 0] += completed
+                }
+                bucket.groups[exercise.muscleGroupKind, default: 0] += completed
             }
             byWeek[weekStart] = bucket
         }
@@ -204,7 +213,8 @@ public enum Stats {
                     volumeKg: bucket.volume,
                     minutes: Int((bucket.seconds / 60).rounded()),
                     completedSets: bucket.sets,
-                    setsByCategory: bucket.categories
+                    setsByCategory: bucket.categories,
+                    setsByMuscleGroup: bucket.groups
                 )
             }
             .sorted { $0.weekStart > $1.weekStart }
@@ -221,6 +231,28 @@ public enum Stats {
         let summaries = weeklySummaries(sessions: sessions, exercisesByID: exercisesByID, calendar: calendar)
         return summaries.first { $0.weekStart == start }
             ?? WeekSummary(weekStart: start, workouts: 0, volumeKg: 0, minutes: 0, completedSets: 0, setsByCategory: [:])
+    }
+
+    /// Serie completate per zona colpita su un insieme qualunque di sessioni.
+    ///
+    /// Usa il `target` corretto dell'esercizio (vedi ``ExerciseCorrections``) e, se
+    /// il target è sconosciuto, la sua categoria. Gli esercizi non risolvibili (id
+    /// sparito dalla libreria) finiscono in ``MuscleGroup/other`` invece di essere
+    /// buttati via: il conto delle serie deve tornare sempre.
+    public static func setsByMuscleGroup(
+        in sessions: [WorkoutSession],
+        exercisesByID: [String: Exercise]
+    ) -> [MuscleGroup: Int] {
+        var result: [MuscleGroup: Int] = [:]
+        for session in sessions {
+            for entry in session.entries {
+                let completed = entry.sets.reduce(0) { $0 + ($1.isCompleted ? 1 : 0) }
+                guard completed > 0 else { continue }
+                let group = exercisesByID[entry.exerciseID].map(MuscleGroup.forExercise) ?? .other
+                result[group, default: 0] += completed
+            }
+        }
+        return result
     }
 
     /// Numero di settimane consecutive con almeno un allenamento, guardando indietro da `date`.

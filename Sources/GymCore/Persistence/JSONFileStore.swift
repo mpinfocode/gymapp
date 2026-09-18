@@ -7,6 +7,8 @@ public enum StoreFile: String, Sendable, Hashable, CaseIterable {
     case bodyEntries
     case settings
     case activeSession
+    /// Esercizi creati dall'utente (SPEC §2, punto 5).
+    case customExercises
 
     /// Nome del file su disco.
     public var fileName: String { "\(rawValue).json" }

@@ -93,6 +93,12 @@ extension Stats {
         public let completedSets: Int
         /// Serie completate per categoria dell'esercizio (chiave inglese del dataset).
         public let setsByCategory: [String: Int]
+        /// Serie completate per zona colpita "da palestra".
+        ///
+        /// È l'aggregato da mostrare in Progressi: parte dal `target` **corretto**
+        /// (vedi ``ExerciseCorrections``), mai dal campo `muscle_group` del dataset
+        /// né dai muscoli secondari (SPEC §2, punti 2 e 3).
+        public let setsByMuscleGroup: [MuscleGroup: Int]
 
         public var id: Date { weekStart }
 
@@ -102,7 +108,8 @@ extension Stats {
             volumeKg: Double,
             minutes: Int,
             completedSets: Int,
-            setsByCategory: [String: Int]
+            setsByCategory: [String: Int],
+            setsByMuscleGroup: [MuscleGroup: Int] = [:]
         ) {
             self.weekStart = weekStart
             self.workouts = workouts
@@ -110,6 +117,19 @@ extension Stats {
             self.minutes = minutes
             self.completedSets = completedSets
             self.setsByCategory = setsByCategory
+            self.setsByMuscleGroup = setsByMuscleGroup
+        }
+
+        /// Serie per zona colpita, ordinate per volume di lavoro decrescente e poi
+        /// per ordine anatomico: pronte da mettere in una card.
+        public var muscleGroupBreakdown: [MuscleGroupFacet] {
+            setsByMuscleGroup
+                .map { MuscleGroupFacet(group: $0.key, count: $0.value) }
+                .sorted { lhs, rhs in
+                    if lhs.count != rhs.count { return lhs.count > rhs.count }
+                    let order = MuscleGroup.displayOrder
+                    return (order.firstIndex(of: lhs.group) ?? 0) < (order.firstIndex(of: rhs.group) ?? 0)
+                }
         }
     }
 

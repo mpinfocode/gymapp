@@ -24,7 +24,14 @@ public final class AppStore {
     /// Sessione in corso, `nil` se non se ne sta svolgendo nessuna.
     public private(set) var activeSession: WorkoutSession?
     /// Libreria esercizi; disponibile dopo ``load()``.
+    ///
+    /// Contiene **solo** i 1.324 record del dataset (già corretti da
+    /// ``ExerciseCorrections``). Per ricerca, filtri e lookup usa i metodi dello
+    /// store, che uniscono anche gli esercizi personalizzati.
     public private(set) var exercises: ExerciseRepository?
+    /// Esercizi creati dall'utente, compresi quelli eliminati ma ancora citati
+    /// dallo storico (``Exercise/isDeleted``). Ordinati per nome.
+    public private(set) var customExercises: [Exercise] = []
 
     /// `true` quando ``load()`` è terminata.
     public private(set) var isLoaded = false
@@ -42,6 +49,9 @@ public final class AppStore {
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored public let calendar: Calendar
     @ObservationIgnored private let saveDelay: Duration
+
+    /// Libreria + personalizzati, ricostruita solo quando i personalizzati cambiano.
+    @ObservationIgnored private var mergedLibraryCache: ExerciseRepository?
 
     @ObservationIgnored private var dirtyFiles: Set<StoreFile> = []
     @ObservationIgnored private var debounceTask: Task<Void, Never>?
@@ -91,6 +101,9 @@ public final class AppStore {
             .sorted { $0.date > $1.date }
         settings = await loadCollection(UserSettings.self, from: .settings, fallback: UserSettings())
         activeSession = await loadOptional(WorkoutSession.self, from: .activeSession)
+        customExercises = Self.sortedCustomExercises(
+            await loadCollection([Exercise].self, from: .customExercises, fallback: [])
+        )
 
         if exercises == nil {
             do {
@@ -100,6 +113,7 @@ public final class AppStore {
             }
         }
 
+        mergedLibraryCache = nil
         isLoaded = true
     }
 
@@ -124,6 +138,200 @@ public final class AppStore {
         let program = SampleProgram.make(startDate: now(), now: now())
         addProgram(program, makeActive: true)
         return program
+    }
+
+    // MARK: - Esercizi: punto unico di lookup e ricerca
+
+    /// Esercizi personalizzati utilizzabili (esclusi quelli eliminati).
+    public var availableCustomExercises: [Exercise] { customExercises.filter(\.isSelectable) }
+
+    /// Libreria + personalizzati utilizzabili, indicizzati insieme.
+    ///
+    /// È **il** punto da cui passano ricerca, filtri e facet della UI: gli esercizi
+    /// dell'utente si comportano in tutto e per tutto come quelli del dataset.
+    /// L'indice si ricostruisce solo quando i personalizzati cambiano (operazione
+    /// rara), quindi digitare resta istantaneo.
+    public var searchableLibrary: ExerciseRepository? {
+        if let mergedLibraryCache { return mergedLibraryCache }
+        guard let exercises else { return nil }
+        let custom = availableCustomExercises
+        let merged = custom.isEmpty ? exercises : ExerciseRepository(exercises: exercises.all + custom)
+        mergedLibraryCache = merged
+        return merged
+    }
+
+    /// Esercizio per id, ovunque si trovi: libreria, personalizzati **o** personalizzati
+    /// eliminati (questi ultimi servono a non rompere schede e storico).
+    public func exercise(id: String) -> Exercise? {
+        if let custom = customExercises.first(where: { $0.id == id }) { return custom }
+        return exercises?.exercise(id: id)
+    }
+
+    /// Nome da mostrare per un id, anche se l'esercizio non esiste più.
+    ///
+    /// Serve allo storico: una sessione di sei mesi fa deve continuare a dire cosa
+    /// si è allenato, non un id nudo.
+    public func exerciseDisplayName(id: String, fallback: String = "Esercizio rimosso") -> String {
+        exercise(id: id)?.displayName ?? fallback
+    }
+
+    /// Dizionario id → esercizio con libreria **e** personalizzati (anche eliminati):
+    /// è quello che serve alle statistiche per risolvere tutto lo storico.
+    public func allExercisesByID() -> [String: Exercise] {
+        var result = exercises?.exercisesByID() ?? [:]
+        for exercise in customExercises { result[exercise.id] = exercise }
+        return result
+    }
+
+    /// Ricerca su libreria + personalizzati.
+    public func searchExercises(_ filter: ExerciseFilter = .empty, limit: Int? = nil) -> [Exercise] {
+        searchableLibrary?.search(filter, favorites: settings.favoriteExerciseIDs, limit: limit) ?? []
+    }
+
+    /// Facet (categoria, attrezzo, target, zona colpita, preferiti) su libreria + personalizzati.
+    public func exerciseFacets(for filter: ExerciseFilter = .empty) -> ExerciseFacets {
+        searchableLibrary?.facets(for: filter, favorites: settings.favoriteExerciseIDs)
+            ?? ExerciseFacets(categories: [], equipment: [], targets: [], favorites: 0, total: 0)
+    }
+
+    // MARK: - Esercizi personalizzati (CRUD)
+
+    /// Crea un esercizio personalizzato con id `custom-<uuid>` e nessun media.
+    ///
+    /// - Returns: `nil` se il nome è vuoto.
+    @discardableResult
+    public func createCustomExercise(
+        name: String,
+        category: String = "",
+        equipment: String = "",
+        target: String = "",
+        secondaryMuscles: [String] = [],
+        notes: String = ""
+    ) -> Exercise? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let exercise = Exercise.custom(
+            name: trimmed,
+            category: category,
+            equipment: equipment,
+            target: target,
+            secondaryMuscles: secondaryMuscles,
+            notes: notes
+        )
+        customExercises.append(exercise)
+        customExercisesDidChange()
+        return exercise
+    }
+
+    /// Esercizio personalizzato per id (anche se eliminato).
+    public func customExercise(id: String) -> Exercise? {
+        customExercises.first { $0.id == id }
+    }
+
+    /// Sostituisce un esercizio personalizzato. Ignora gli id sconosciuti e i record
+    /// non personalizzati: la libreria del dataset non si modifica.
+    public func updateCustomExercise(_ exercise: Exercise) {
+        guard exercise.isCustom,
+              let index = customExercises.firstIndex(where: { $0.id == exercise.id }) else { return }
+        customExercises[index] = exercise
+        customExercisesDidChange()
+    }
+
+    /// Modifica sul posto i campi di un esercizio personalizzato.
+    @discardableResult
+    public func editCustomExercise(
+        id: String,
+        name: String? = nil,
+        category: String? = nil,
+        equipment: String? = nil,
+        target: String? = nil,
+        secondaryMuscles: [String]? = nil,
+        notes: String? = nil
+    ) -> Exercise? {
+        guard let index = customExercises.firstIndex(where: { $0.id == id }) else { return nil }
+        let current = customExercises[index]
+        let newName = (name ?? current.name).trimmingCharacters(in: .whitespacesAndNewlines)
+        let updated = Exercise.custom(
+            id: current.id,
+            name: newName.isEmpty ? current.name : newName,
+            category: category ?? current.category,
+            equipment: equipment ?? current.equipment,
+            target: target ?? current.target,
+            secondaryMuscles: secondaryMuscles ?? current.secondaryMuscles,
+            notes: notes ?? current.notes,
+            isDeleted: current.isDeleted
+        )
+        customExercises[index] = updated
+        customExercisesDidChange()
+        return updated
+    }
+
+    /// `true` se l'esercizio è citato da una scheda, dallo storico o dalla sessione in corso.
+    public func isExerciseInUse(_ exerciseID: String) -> Bool {
+        if programs.contains(where: { $0.days.contains { $0.items.contains { $0.exerciseID == exerciseID } } }) {
+            return true
+        }
+        if sessions.contains(where: { $0.entries.contains { $0.exerciseID == exerciseID } }) { return true }
+        if activeSession?.entries.contains(where: { $0.exerciseID == exerciseID }) == true { return true }
+        return false
+    }
+
+    /// Esito di ``deleteCustomExercise(id:)``.
+    public enum CustomExerciseDeletion: String, Sendable, Hashable {
+        /// L'esercizio non era usato da nessuna parte: rimosso davvero.
+        case removed
+        /// L'esercizio era citato da scheda/storico: conservato con il flag di eliminato,
+        /// così nome e dati restano e lo storico non si rompe.
+        case archived
+        /// Id sconosciuto o non personalizzato: nessuna modifica.
+        case notFound
+    }
+
+    /// Elimina un esercizio personalizzato.
+    ///
+    /// Se è citato da una scheda, da una sessione passata o da quella in corso viene
+    /// fatto un **soft delete**: sparisce da ricerca, filtri e picker ma resta
+    /// risolvibile per id, quindi lo storico continua a mostrare nome, zona e note
+    /// (SPEC §2, punto 5). Viene anche tolto dai preferiti e dai recenti.
+    @discardableResult
+    public func deleteCustomExercise(id: String) -> CustomExerciseDeletion {
+        guard let index = customExercises.firstIndex(where: { $0.id == id }) else { return .notFound }
+
+        var settingsChanged = false
+        if settings.favoriteExerciseIDs.remove(id) != nil { settingsChanged = true }
+        if settings.recentExerciseIDs.contains(id) {
+            settings.recentExerciseIDs.removeAll { $0 == id }
+            settingsChanged = true
+        }
+        if settingsChanged { markDirty(.settings) }
+
+        if isExerciseInUse(id) {
+            customExercises[index] = customExercises[index].markingDeleted(true)
+            customExercisesDidChange()
+            return .archived
+        }
+        customExercises.remove(at: index)
+        customExercisesDidChange()
+        return .removed
+    }
+
+    /// Rimette in circolazione un personalizzato eliminato (annulla il soft delete).
+    @discardableResult
+    public func restoreCustomExercise(id: String) -> Exercise? {
+        guard let index = customExercises.firstIndex(where: { $0.id == id }) else { return nil }
+        customExercises[index] = customExercises[index].markingDeleted(false)
+        customExercisesDidChange()
+        return customExercises[index]
+    }
+
+    private func customExercisesDidChange() {
+        customExercises = Self.sortedCustomExercises(customExercises)
+        mergedLibraryCache = nil
+        markDirty(.customExercises)
+    }
+
+    private static func sortedCustomExercises(_ exercises: [Exercise]) -> [Exercise] {
+        exercises.sorted { SearchText.normalize($0.name) < SearchText.normalize($1.name) }
     }
 
     // MARK: - Schede
@@ -644,13 +852,16 @@ public final class AppStore {
         return Stats.progressionSuggestion(
             for: item,
             lastSession: last,
-            equipment: exercises?.exercise(id: item.exerciseID)?.equipment ?? ""
+            equipment: exercise(id: item.exerciseID)?.equipment ?? ""
         )
     }
 
     /// Esercizi con cui sostituire quello indicato (stesso target, poi stessa categoria).
+    ///
+    /// Cerca fra libreria **e** personalizzati, così la macchina occupata si può
+    /// rimpiazzare anche con un esercizio inventato dall'utente.
     public func alternatives(for exerciseID: String, limit: Int = 12) -> [Exercise] {
-        guard let repository = exercises, let exercise = repository.exercise(id: exerciseID) else { return [] }
+        guard let repository = searchableLibrary, let exercise = exercise(id: exerciseID) else { return [] }
         return repository.alternatives(for: exercise, favorites: settings.favoriteExerciseIDs, limit: limit)
     }
 
@@ -723,11 +934,12 @@ public final class AppStore {
 
     // MARK: - Statistiche pronte all'uso
 
-    /// Riepiloghi settimanali basati sullo storico e sulla libreria caricata.
+    /// Riepiloghi settimanali basati sullo storico, sulla libreria corretta e sugli
+    /// esercizi personalizzati (anche eliminati: lo storico resta completo).
     public func weeklySummaries() -> [Stats.WeekSummary] {
         Stats.weeklySummaries(
             sessions: sessions,
-            exercisesByID: exercises?.exercisesByID() ?? [:],
+            exercisesByID: allExercisesByID(),
             calendar: calendar
         )
     }
@@ -737,9 +949,14 @@ public final class AppStore {
         Stats.weekSummary(
             containing: now(),
             sessions: sessions,
-            exercisesByID: exercises?.exercisesByID() ?? [:],
+            exercisesByID: allExercisesByID(),
             calendar: calendar
         )
+    }
+
+    /// Serie completate per zona colpita su tutto lo storico (o su un sottoinsieme).
+    public func setsByMuscleGroup(in sessions: [WorkoutSession]? = nil) -> [MuscleGroup: Int] {
+        Stats.setsByMuscleGroup(in: sessions ?? self.sessions, exercisesByID: allExercisesByID())
     }
 
     public func weekStreak() -> Int {
@@ -767,7 +984,8 @@ public final class AppStore {
             programs: programs,
             sessions: sessions,
             bodyEntries: bodyEntries,
-            settings: settings
+            settings: settings,
+            customExercises: customExercises
         ).encoded()
     }
 
@@ -780,10 +998,12 @@ public final class AppStore {
         sessions = payload.sessions.sorted { $0.startedAt > $1.startedAt }
         bodyEntries = payload.bodyEntries.sorted { $0.date > $1.date }
         settings = payload.settings
+        customExercises = Self.sortedCustomExercises(payload.customExercises)
+        mergedLibraryCache = nil
         activeSession = nil
         liveRecords = [:]
         persistActiveSession()
-        markDirty(.programs, .sessions, .bodyEntries, .settings)
+        markDirty(.programs, .sessions, .bodyEntries, .settings, .customExercises)
         await flush()
     }
 
@@ -820,6 +1040,7 @@ public final class AppStore {
         let sessionsSnapshot = sessions
         let bodySnapshot = bodyEntries
         let settingsSnapshot = settings
+        let customSnapshot = customExercises
 
         enqueueWrite { [weak self] store in
             for file in files.sorted(by: { $0.rawValue < $1.rawValue }) {
@@ -829,6 +1050,7 @@ public final class AppStore {
                     case .sessions: try await store.save(sessionsSnapshot, to: .sessions)
                     case .bodyEntries: try await store.save(bodySnapshot, to: .bodyEntries)
                     case .settings: try await store.save(settingsSnapshot, to: .settings)
+                    case .customExercises: try await store.save(customSnapshot, to: .customExercises)
                     case .activeSession: break // gestita da persistActiveSession()
                     }
                 } catch {

@@ -16,6 +16,9 @@ public struct BackupPayload: Codable, Sendable, Hashable {
     public let sessions: [WorkoutSession]
     public let bodyEntries: [BodyEntry]
     public let settings: UserSettings
+    /// Esercizi personalizzati, compresi quelli eliminati: senza di loro un backup
+    /// ripristinato mostrerebbe sessioni con esercizi senza nome.
+    public let customExercises: [Exercise]
 
     public init(
         version: Int = BackupPayload.currentVersion,
@@ -23,7 +26,8 @@ public struct BackupPayload: Codable, Sendable, Hashable {
         programs: [Program],
         sessions: [WorkoutSession],
         bodyEntries: [BodyEntry],
-        settings: UserSettings
+        settings: UserSettings,
+        customExercises: [Exercise] = []
     ) {
         self.version = version
         self.exportedAt = exportedAt
@@ -31,6 +35,7 @@ public struct BackupPayload: Codable, Sendable, Hashable {
         self.sessions = sessions
         self.bodyEntries = bodyEntries
         self.settings = settings
+        self.customExercises = customExercises
     }
 
     /// Decodifica tollerante: un backup scritto da una versione futura che aggiunge
@@ -43,6 +48,7 @@ public struct BackupPayload: Codable, Sendable, Hashable {
         sessions = try c.decodeIfPresent([WorkoutSession].self, forKey: .sessions) ?? []
         bodyEntries = try c.decodeIfPresent([BodyEntry].self, forKey: .bodyEntries) ?? []
         settings = try c.decodeIfPresent(UserSettings.self, forKey: .settings) ?? UserSettings()
+        customExercises = try c.decodeIfPresent([Exercise].self, forKey: .customExercises) ?? []
     }
 
     /// Codifica in JSON (stesse regole di ``JSONCoding``, ma indentato: il file
