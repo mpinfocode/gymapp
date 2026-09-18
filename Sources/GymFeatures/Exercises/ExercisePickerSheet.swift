@@ -69,6 +69,32 @@ public struct ExercisePickerSheet: View {
     }
 
     public var body: some View {
+        // Stesso principio della shell: la barra "Aggiungi (n)" sta SOTTO l'elenco
+        // in un `VStack`, non in un `safeAreaInset`. L'elenco finisce dove comincia
+        // la barra, quindi l'ultima riga resta raggiungibile senza dipendere da
+        // come la safe area si propaga dentro la sheet.
+        VStack(spacing: 0) {
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+            confirmBar
+        }
+        .pageBackground()
+        .sheet(item: $detail) { target in
+            ExerciseDetailScreen(
+                exerciseID: target.id,
+                purpose: .picking(isAdded: isAdded(target.id), add: { add(id: target.id) })
+            )
+        }
+        .sheet(isPresented: $isCreatingCustom) {
+            CustomExerciseFormSheet(prefilledName: prefilledName) { created in
+                pick([created])
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         Group {
             if let section = openedSection {
                 ExerciseGroupList(
@@ -93,88 +119,28 @@ public struct ExercisePickerSheet: View {
                 )
             }
         }
-        .pageBackground()
-        .safeAreaInset(edge: .bottom) { confirmBar }
-        .sheet(item: $detail) { target in
-            ExerciseDetailScreen(
-                exerciseID: target.id,
-                purpose: .picking(isAdded: isAdded(target.id), add: { add(id: target.id) })
-            )
-        }
-        .sheet(isPresented: $isCreatingCustom) {
-            CustomExerciseFormSheet(prefilledName: prefilledName) { created in
-                pick([created])
-            }
-        }
     }
 
     // MARK: - Testate
 
     private var rootHeader: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.m) {
-            HStack {
-                Button("Annulla") { dismiss() }
-                    .font(.bodyText)
-                    .foregroundStyle(Theme.textSecondary)
-                    .buttonStyle(.plain)
-                    .frame(minHeight: Theme.Size.minTapTarget, alignment: .leading)
-
-                Spacer(minLength: Theme.Spacing.s)
-
-                createCustomButton
-            }
-
-            Text(title)
-                .sectionTitleStyle()
-                .accessibilityAddTraits(.isHeader)
-        }
+        SheetHeader(title: title, actionTitle: "Annulla") { dismiss() }
+            .sheetHeaderMargins()
     }
 
     private func groupHeader(_ section: ExerciseSection) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.m) {
-            HStack {
-                Button {
-                    openedSection = nil
-                    equipment = []
-                } label: {
-                    HStack(spacing: Theme.Spacing.xs) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(.footnote, weight: .semibold))
-                        Text("Zone")
-                    }
-                    .font(.bodyText)
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(minHeight: Theme.Size.minTapTarget)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(PressableButtonStyle())
-                .accessibilityLabel(Text("Torna alle zone"))
-
-                Spacer(minLength: Theme.Spacing.s)
-
-                createCustomButton
-            }
-
-            Text(section.title)
-                .sectionTitleStyle()
-                .accessibilityAddTraits(.isHeader)
+        SheetHeader(
+            title: section.title,
+            back: {
+                openedSection = nil
+                equipment = []
+            },
+            backTitle: "Zone",
+            actionTitle: "Annulla"
+        ) {
+            dismiss()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var createCustomButton: some View {
-        Button {
-            prefilledName = model.trimmedQuery
-            isCreatingCustom = true
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(.body, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-                .frame(width: Theme.Size.minTapTarget, height: Theme.Size.minTapTarget)
-                .background(Theme.surface, in: Circle())
-        }
-        .buttonStyle(PressableButtonStyle())
-        .accessibilityLabel(Text("Crea esercizio personalizzato"))
+        .sheetHeaderMargins()
     }
 
     // MARK: - Riga
@@ -265,9 +231,10 @@ public struct ExercisePickerSheet: View {
                 pick(selection.compactMap { app.store.exercise(id: $0) })
             }
             .padding(.horizontal, Theme.Spacing.page)
-            .padding(.top, Theme.Spacing.s)
+            .padding(.top, Theme.Spacing.m)
             .padding(.bottom, Theme.Spacing.m)
-            .background(Theme.background)
+            // Fondo pieno proprio, esteso sotto l'home indicator.
+            .background(Theme.background.ignoresSafeArea(edges: .bottom))
         }
     }
 

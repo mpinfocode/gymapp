@@ -23,26 +23,27 @@ public struct ProgramArchiveScreen: View {
         let archived = app.store.archivedPrograms
 
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.l) {
-                Text("Archivio")
-                    .sectionTitleStyle()
-                    .accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: 0) {
+                PageHeader(title: "Archivio")
 
-                if archived.isEmpty {
-                    Text("Nessuna scheda in archivio.")
-                        .font(.captionText)
-                        .foregroundStyle(Theme.textSecondary)
-                } else {
-                    ForEach(archived) { program in
-                        row(program)
+                VStack(alignment: .leading, spacing: Theme.Spacing.l) {
+                    if archived.isEmpty {
+                        Text("Nessuna scheda in archivio.")
+                            .font(.captionText)
+                            .foregroundStyle(Theme.textSecondary)
+                    } else {
+                        ForEach(archived) { program in
+                            row(program)
+                        }
                     }
                 }
+                .padding(.horizontal, Theme.Spacing.page)
             }
-            .padding(.horizontal, Theme.Spacing.page)
-            .padding(.top, Theme.Spacing.l)
-            .padding(.bottom, Theme.Spacing.xxl)
+            .padding(.bottom, Theme.Spacing.l)
         }
+        .keyboardDismissable()
         .pageBackground()
+        .navigationBarTitleDisplayModeInline()
         .alert("Eliminare la scheda?", isPresented: deletionBinding) {
             Button("Annulla", role: .cancel) { pendingDeletion = nil }
             Button("Elimina", role: .destructive) {
@@ -79,7 +80,7 @@ public struct ProgramArchiveScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
 
-            ProgramMenu(accessibilityTitle: "Azioni su \(program.name)", background: Theme.surfaceElevated) {
+            EllipsisMenu(accessibilityTitle: "Azioni su \(program.name)", background: Theme.surfaceElevated) {
                 Button("Riattiva") { app.store.activate(programID: program.id) }
                 Button("Duplica come nuova scheda") {
                     app.store.duplicateProgram(id: program.id, activate: false)

@@ -104,24 +104,22 @@ public struct CustomExerciseFormSheet: View {
             }
             .padding(.horizontal, Theme.Spacing.page)
             .padding(.top, Theme.Spacing.xl)
-            .padding(.bottom, Theme.Spacing.xxxl)
+            .padding(.bottom, Theme.Spacing.l)
         }
+        .keyboardDismissable()
         .pageBackground()
+        .keyboardDismissOnTap()
+        .keyboardDoneToolbar()
     }
 
     // MARK: - Pezzi
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.m) {
-            Button("Annulla") { dismiss() }
-                .font(.bodyText)
-                .foregroundStyle(Theme.textSecondary)
-                .buttonStyle(.plain)
-                .frame(minHeight: Theme.Size.minTapTarget, alignment: .leading)
-
-            Text(editing == nil ? "Nuovo esercizio" : "Modifica esercizio")
-                .sectionTitleStyle()
-                .accessibilityAddTraits(.isHeader)
+        SheetHeader(
+            title: editing == nil ? "Nuovo esercizio" : "Modifica esercizio",
+            actionTitle: "Annulla"
+        ) {
+            dismiss()
         }
     }
 

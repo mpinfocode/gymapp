@@ -40,12 +40,12 @@ struct ExerciseLibraryRoot<Header: View, Row: View>: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    // La testata arriva già con i propri margini: è ``PageHeader``
+                    // nel tab Esercizi e ``SheetHeader`` nel picker.
                     header()
-                        .padding(.horizontal, Theme.Spacing.page)
 
                     SearchField(placeholder: "Cerca: panca, stacco, curl…", text: $model.query)
                         .padding(.horizontal, Theme.Spacing.page)
-                        .padding(.top, Theme.Spacing.l)
 
                     if model.hasQuery {
                         searchResults
@@ -53,10 +53,12 @@ struct ExerciseLibraryRoot<Header: View, Row: View>: View {
                         sections
                     }
                 }
-                .padding(.top, Theme.Spacing.s)
-                .padding(.bottom, Theme.Spacing.xxxl)
+                // In fondo solo un piccolo respiro: lo spazio del menu non è più
+                // affar suo, lo occupa la fascia della shell.
+                .padding(.bottom, Theme.Spacing.l)
                 .id(ExerciseLibraryTopAnchor.id)
             }
+            .keyboardDismissable()
             // Ritocco sull'icona del tab già selezionato: si torna in cima.
             .onChange(of: app.router.scrollToTopToken(for: scrollTopTab ?? .home)) { _, _ in
                 guard scrollTopTab != nil else { return }

@@ -31,22 +31,24 @@ public struct MeasuresScreen: View {
 
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
+                VStack(alignment: .leading, spacing: 0) {
                     header
                         .id(Self.topID)
 
-                    if metrics.isEmpty {
-                        emptyState
-                    } else {
-                        weightSection
-                        otherMetrics(metrics)
-                        entryList(entries)
+                    VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
+                        if metrics.isEmpty {
+                            emptyState
+                        } else {
+                            weightSection
+                            otherMetrics(metrics)
+                            entryList(entries)
+                        }
                     }
+                    .padding(.horizontal, Theme.Spacing.page)
                 }
-                .padding(.horizontal, Theme.Spacing.page)
-                .padding(.top, Theme.Spacing.s)
-                .padding(.bottom, Theme.Spacing.xl)
+                .padding(.bottom, Theme.Spacing.l)
             }
+            .keyboardDismissable()
             // Ritocco dell'icona "Misure" quando si è già alla radice: si torna in
             // cima (il token lo incrementa `Router.reselect(_:)`).
             .onChange(of: app.router.scrollToTopToken(for: .measures)) { _, _ in
@@ -80,23 +82,13 @@ public struct MeasuresScreen: View {
 
     // MARK: - Testata
 
+    /// Stessa testata di tutte le altre pagine: niente overline con la data, niente
+    /// titolo heavy maiuscolo. Un solo accesso alle Impostazioni in tutta l'app
+    /// (l'ingranaggio della Home): qui l'azione è "+".
     private var header: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            Text(Formatters.longDateUppercased(app.now, calendar: app.calendar))
-                .overlineStyle()
-
-            HStack(alignment: .center, spacing: Theme.Spacing.s) {
-                Text("Misure")
-                    .pageTitleStyle()
-                    .accessibilityAddTraits(.isHeader)
-
-                Spacer(minLength: Theme.Spacing.s)
-
-                // Un solo accesso alle Impostazioni in tutta l'app: l'ingranaggio
-                // della Home (`app.router.presentSettings()`). Qui resta solo "+".
-                CircleIconButton(systemImage: "plus", accessibilityTitle: "Nuova rilevazione") {
-                    isAddingEntry = true
-                }
+        PageHeader(title: "Misure") {
+            CircleIconButton(systemImage: "plus", accessibilityTitle: "Nuova rilevazione") {
+                isAddingEntry = true
             }
         }
     }
@@ -243,6 +235,6 @@ public struct MeasuresScreen: View {
             actionTitle: "Nuova rilevazione",
             action: { isAddingEntry = true }
         )
-        .padding(.top, Theme.Spacing.xxl)
+        .padding(.top, Theme.Spacing.xxxl)
     }
 }

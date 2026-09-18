@@ -16,26 +16,51 @@ private let deviceHeight: CGFloat = 852
 @MainActor
 func makeScenes(full: AppEnvironment, empty: AppEnvironment) -> [SnapshotScene] {
     return [
-        // Shell completa: i quattro tab, stato pieno.
+        // Shell completa: i quattro tab, stato pieno. Tutte le scene `root-*`
+        // passano alla shell le misure di un iPhone 17 (barra di stato 59, home
+        // indicator 34) SENZA safe area di sistema: è il caso del telefono vero.
         SnapshotScene("root-home", height: deviceHeight, settle: 2.5,
-                      view: RootView(environment: full, initialTab: .home)),
+                      view: RootShellScene(environment: full, tab: .home)),
         SnapshotScene("root-scheda", height: deviceHeight, settle: 2.5,
-                      view: RootView(environment: full, initialTab: .program)),
+                      view: RootShellScene(environment: full, tab: .program)),
         SnapshotScene("root-esercizi", height: deviceHeight,
-                      view: RootView(environment: full, initialTab: .exercises)),
+                      view: RootShellScene(environment: full, tab: .exercises)),
         SnapshotScene("root-misure", height: deviceHeight,
-                      view: RootView(environment: full, initialTab: .measures)),
-        SnapshotScene("root-scuro", height: deviceHeight, dark: true,
-                      view: RootView(environment: full, initialTab: .home)),
+                      view: RootShellScene(environment: full, tab: .measures)),
+        SnapshotScene("root-scuro", height: deviceHeight, dark: true, settle: 2.5,
+                      view: RootShellScene(environment: full, tab: .home)),
+
+        // VERIFICA DELLE FASCE: le stesse radici scrollate FINO IN FONDO. L'ultima
+        // riga deve terminare sopra il bordo superiore della fascia della tab bar.
+        SnapshotScene("root-esercizi-fondo", height: deviceHeight, settle: 4,
+                      view: RootShellScene(environment: full, tab: .exercises, scrolledToBottom: true)),
+        SnapshotScene("root-misure-fondo", height: deviceHeight, settle: 3,
+                      view: RootShellScene(environment: full, tab: .measures, scrolledToBottom: true)),
+        SnapshotScene("root-home-fondo", height: deviceHeight, settle: 4,
+                      view: LongHomeShellScene()),
+        SnapshotScene("root-esercizi-zona-fondo", height: deviceHeight, settle: 6,
+                      view: GroupShellScene()),
 
         // Pagine spinte DENTRO la shell: la tab bar resta visibile e il contenuto
         // (bottoni ancorati in basso compresi) deve stare sopra di lei.
         SnapshotScene("root-scheda-giorno", height: deviceHeight, settle: 4,
                       view: ShellScene(variant: .programDay)),
+        // Lista più corta dello schermo: è il caso in cui sul telefono il bottone
+        // "Aggiungi esercizi" finiva sotto la capsula.
+        SnapshotScene("root-scheda-giorno-corto", height: deviceHeight, settle: 4,
+                      view: ShellScene(variant: .programDayShort)),
+        // Lista più lunga dello schermo, scrollata in fondo.
+        SnapshotScene("root-scheda-giorno-lungo", height: deviceHeight, settle: 4,
+                      view: ShellScene(variant: .programDayLong, scrolledToBottom: true)),
         SnapshotScene("root-esercizi-dettaglio", height: deviceHeight, settle: 6,
                       view: ShellScene(variant: .exerciseDetail)),
         SnapshotScene("root-misure-dettaglio", height: deviceHeight, settle: 3,
                       view: ShellScene(variant: .bodyMetric)),
+
+        // Coerenza delle intestazioni: le quattro radici affiancate. Titolo alla
+        // stessa Y, stessa dimensione, bottone alla stessa X/Y e stessa forma.
+        SnapshotScene("coerenza-intestazioni", height: 4 * 230 + 3, settle: 5,
+                      view: HeaderConsistencyScene(environment: full)),
 
         // Avvio fallito: lo stato di errore ha sempre la sua azione "Riprova".
         SnapshotScene("root-avvio-errore", height: deviceHeight,
@@ -91,6 +116,14 @@ func makeScenes(full: AppEnvironment, empty: AppEnvironment) -> [SnapshotScene] 
                       view: ProgramVariantScene(variant: .create)),
         SnapshotScene("scheda-archivio", height: deviceHeight, settle: 2.5,
                       view: ProgramVariantScene(variant: .archive)),
+
+        // Muscoli colpiti: la ripartizione della scheda.
+        SnapshotScene("muscoli-riepilogo", height: 460, settle: 2.5, view: MusclesScene(variant: .summary)),
+        SnapshotScene("muscoli-giorno", height: 300, settle: 2.5, view: MusclesScene(variant: .day)),
+        SnapshotScene("muscoli-squilibrata", height: 340, settle: 2.5, view: MusclesScene(variant: .unbalanced)),
+        SnapshotScene("muscoli-compatto", height: 480, settle: 2.5, view: MusclesScene(variant: .compact)),
+        SnapshotScene("muscoli-vuoto", height: 240, settle: 2.5, view: MusclesScene(variant: .empty)),
+        SnapshotScene("muscoli-scuro", height: 460, dark: true, settle: 2.5, view: MusclesScene(variant: .summary)),
 
         // Misure.
         SnapshotScene("misure", view: screen(MeasuresScreen(), in: full)),

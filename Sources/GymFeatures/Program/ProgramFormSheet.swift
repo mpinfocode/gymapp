@@ -58,7 +58,9 @@ public struct ProgramFormSheet: View {
             .padding(.horizontal, Theme.Spacing.page)
             .padding(.vertical, Theme.Spacing.xl)
         }
+        .keyboardDismissable()
         .pageBackground()
+        .keyboardDismissOnTap()
         .keyboardDoneToolbar { nameFocused = false }
         .onAppear(perform: load)
         .alert("C'è già una scheda attiva", isPresented: $confirmsReplacement) {
@@ -72,18 +74,11 @@ public struct ProgramFormSheet: View {
     // MARK: - Intestazione
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(isCreating ? "Nuova scheda" : "Dettagli")
-                .sectionTitleStyle()
-                .accessibilityAddTraits(.isHeader)
-
-            Spacer(minLength: Theme.Spacing.m)
-
-            Button("Annulla") { dismiss() }
-                .font(.system(.subheadline, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
-                .buttonStyle(.plain)
-                .frame(minHeight: Theme.Size.minTapTarget)
+        SheetHeader(
+            title: isCreating ? "Nuova scheda" : "Dettagli",
+            actionTitle: "Annulla"
+        ) {
+            dismiss()
         }
     }
 

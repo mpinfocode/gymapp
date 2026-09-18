@@ -5,17 +5,29 @@ import GymFeatures
 /// Lo schermo dell'iPhone simulato: ``RootView`` dentro una cornice arrotondata,
 /// con le stesse safe area del dispositivo scelto.
 ///
-/// Come si ottengono gli inset: su macOS la finestra non ha safe area, quindi la
-/// via più fedele disponibile è `safeAreaInset`, che è esattamente il meccanismo
-/// che iOS usa per la barra di stato e per l'home indicator: la vista inserita
-/// occupa il bordo e **riduce la safe area** del contenuto, che però continua a
-/// disegnare sotto (lo sfondo della pagina arriva fino al vetro, come sul telefono).
-/// Il layout interno dell'app riceve così gli stessi inset che avrebbe su iPhone.
+/// ## Due modi di passare le safe area, e perché ne serviva un secondo
+///
+/// - **morbida** (`rigidSafeArea == false`): la cornice usa `safeAreaInset`, che è
+///   il meccanismo con cui iOS riserva barra di stato e home indicator. La vista
+///   inserita occupa il bordo e **riduce la safe area** del contenuto. Comodo, ma
+///   proprio questa riduzione sul telefono vero **non si propaga** dentro i
+///   `NavigationStack` e le `ScrollView`: l'anteprima sembrava corretta mentre
+///   l'app su iPhone aveva l'ultima riga sotto il menu e il contenuto sotto
+///   l'orologio. In altre parole: questa modalità NASCONDE proprio la classe di
+///   difetti da cercare.
+/// - **rigida** (predefinita): la cornice non passa **nessuna** safe area al
+///   contenuto e comunica le misure alla shell con
+///   ``EnvironmentValues/deviceInsetsOverride``. La shell costruisce le sue fasce
+///   da quei numeri, esattamente come sul telefono le costruisce dalla safe area
+///   della finestra, e tutto ciò che sta sotto la shell (stack, liste, pagine
+///   spinte) vive con safe area zero, come accade davvero su iPhone.
 struct DeviceFrameView: View {
 
     let device: PreviewDevice
     let environment: AppEnvironment?
     let dark: Bool
+    /// `true` (predefinito): nessuna safe area al contenuto, misure passate a mano.
+    var rigidSafeArea: Bool = true
 
     /// Margine neutro attorno alla cornice.
     static let margin: CGFloat = 20
@@ -41,13 +53,31 @@ struct DeviceFrameView: View {
     @ViewBuilder
     private var screen: some View {
         if let environment {
-            RootView(environment: environment)
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    StatusBarView(height: device.topInset, compact: device.bottomInset == 0)
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    HomeIndicatorView(height: device.bottomInset)
-                }
+            if rigidSafeArea {
+                // Nessuna safe area: la shell riceve solo le misure e si costruisce
+                // le fasce da sé. Barra di stato e home indicator sono disegnati
+                // SOPRA, come fa il vetro del telefono: non tolgono spazio a
+                // nessuno e non riducono nessuna safe area.
+                RootView(environment: environment)
+                    .environment(\.deviceInsetsOverride, DeviceInsets(
+                        top: device.topInset,
+                        bottom: device.bottomInset
+                    ))
+                    .overlay(alignment: .top) {
+                        StatusBarView(height: device.topInset, compact: device.bottomInset == 0)
+                    }
+                    .overlay(alignment: .bottom) {
+                        HomeIndicatorView(height: device.bottomInset)
+                    }
+            } else {
+                RootView(environment: environment)
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        StatusBarView(height: device.topInset, compact: device.bottomInset == 0)
+                    }
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        HomeIndicatorView(height: device.bottomInset)
+                    }
+            }
         } else {
             ZStack {
                 Color(nsColor: .textBackgroundColor)

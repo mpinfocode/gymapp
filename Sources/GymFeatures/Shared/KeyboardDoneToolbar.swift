@@ -47,18 +47,18 @@ extension View {
     }
 }
 
-#if os(iOS)
 /// Chiusura della tastiera senza `@FocusState`, isolata qui per tenere il ramo
-/// solo-iOS in un punto unico e banale.
+/// solo-iOS in un punto unico e banale. Fuori da iOS non fa niente.
 @MainActor
 enum KeyboardDismisser {
     static func dismiss() {
+        #if os(iOS)
         UIApplication.shared.sendAction(
             #selector(UIResponder.resignFirstResponder),
             to: nil,
             from: nil,
             for: nil
         )
+        #endif
     }
 }
-#endif

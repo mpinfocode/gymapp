@@ -35,19 +35,24 @@ public struct ProgramDayEditor: View {
     public var body: some View {
         Group {
             if let day {
+                // Il bottone primario sta SOTTO l'elenco in un `VStack`, non in un
+                // `safeAreaInset`: su iPhone (iOS 26) un `safeAreaInset` dentro un
+                // `NavigationStack` si ancorava al fondo FISICO dello schermo e
+                // finiva sotto la fascia della tab bar. Qui l'elenco termina dove
+                // comincia il bottone, e il bottone dove comincia la fascia:
+                // nessuna safe area da propagare.
                 VStack(alignment: .leading, spacing: 0) {
                     header(day)
                     content(day)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                    addButton
                 }
-                // Il bottone primario sta in un `safeAreaInset`, non in fondo a
-                // una VStack: così resta sopra l'home indicator e, soprattutto,
-                // la `List` riceve l'inset corrispondente e l'ultima riga resta
-                // raggiungibile invece di finire sotto il bottone.
-                .safeAreaInset(edge: .bottom) { addButton }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .pageBackground()
+        .keyboardDismissOnTap()
         .navigationBarTitleDisplayModeInline()
         .onAppear(perform: load)
         .keyboardDoneToolbar { nameFocused = false }
@@ -89,7 +94,7 @@ public struct ProgramDayEditor: View {
                     .onChange(of: name) { _, newValue in rename(to: newValue) }
                     .accessibilityLabel(Text("Nome del giorno"))
 
-                ProgramMenu(accessibilityTitle: "Azioni sul giorno") {
+                EllipsisMenu(accessibilityTitle: "Azioni sul giorno") {
                     Button("Duplica il giorno", action: duplicate)
                     Button("Elimina il giorno", role: .destructive) { confirmsDeletion = true }
                 }
@@ -99,11 +104,14 @@ public struct ProgramDayEditor: View {
                 Text(ProgramPresentation.exerciseCount(day.items.count))
                     .font(.captionText)
                     .foregroundStyle(Theme.textSecondary)
+                MuscleDistributionCompact(programID: programID, dayID: dayID)
             }
         }
+        // Stessi margini di ``PageHeader``: il titolo sta alla stessa altezza di
+        // tutte le altre pagine, anche se qui è un campo rinominabile.
         .padding(.horizontal, Theme.Spacing.page)
-        .padding(.top, Theme.Spacing.l)
-        .padding(.bottom, Theme.Spacing.l)
+        .padding(.top, Theme.Spacing.s)
+        .padding(.bottom, Theme.Spacing.xl)
     }
 
     // MARK: - Elenco
@@ -158,6 +166,7 @@ public struct ProgramDayEditor: View {
                 }
             }
             .listStyle(.plain)
+            .keyboardDismissable()
             .scrollContentBackground(.hidden)
             .environment(\.defaultMinListRowHeight, 1)
         }
@@ -212,10 +221,10 @@ public struct ProgramDayEditor: View {
         }
         .padding(.horizontal, Theme.Spacing.page)
         .padding(.top, Theme.Spacing.m)
-        .padding(.bottom, Theme.Spacing.s)
-        // Il bottone galleggia sopra la lista: senza fondo si vedrebbero le
-        // righe passargli dietro.
-        .background(Theme.background)
+        .padding(.bottom, Theme.Spacing.m)
+        // Fondo pieno: l'elenco non ci passa dietro, e sotto c'è già la fascia
+        // della tab bar (o, in una sheet, l'home indicator).
+        .background(Theme.background.ignoresSafeArea(edges: .bottom))
     }
 
     private func add(_ exercises: [Exercise]) {

@@ -34,13 +34,12 @@ struct ExerciseGroupList<Header: View, Row: View>: View {
     var body: some View {
         List {
             Group {
+                // La testata arriva già con i propri margini (``PageHeader`` nel
+                // tab Esercizi, ``SheetHeader`` nel picker).
                 header()
-                    .padding(.horizontal, Theme.Spacing.page)
-                    .padding(.top, Theme.Spacing.s)
 
                 if !chips.isEmpty {
                     equipmentChips
-                        .padding(.top, Theme.Spacing.l)
                 }
 
                 if results.isEmpty {
@@ -76,6 +75,7 @@ struct ExerciseGroupList<Header: View, Row: View>: View {
                 .plainListRow()
         }
         .listStyle(.plain)
+        .keyboardDismissable()
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 1)
         .task(id: signature) { await load() }

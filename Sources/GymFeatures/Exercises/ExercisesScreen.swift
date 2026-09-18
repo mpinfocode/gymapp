@@ -63,27 +63,11 @@ public struct ExercisesScreen: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: Theme.Spacing.m) {
-            Text("Esercizi")
-                .greetingStyle()
-                .accessibilityAddTraits(.isHeader)
-
-            Spacer(minLength: Theme.Spacing.s)
-
-            // Stesso trattamento del resto della testata: cerchio `surface` da 44pt.
-            // Creare un esercizio è un'azione rara, non merita una capsula ink.
-            Button {
+        PageHeader(title: "Esercizi") {
+            CircleIconButton(systemImage: "plus", accessibilityTitle: "Nuovo esercizio personalizzato") {
                 prefilledName = ""
                 isCreatingCustom = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(.body, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .frame(width: Theme.Size.minTapTarget, height: Theme.Size.minTapTarget)
-                    .background(Theme.surface, in: Circle())
             }
-            .buttonStyle(PressableButtonStyle())
-            .accessibilityLabel(Text("Nuovo esercizio personalizzato"))
         }
     }
 }
@@ -106,12 +90,7 @@ public struct ExerciseGroupScreen: View {
         ExerciseGroupList(
             section: section,
             equipment: $equipment,
-            header: {
-                Text(section.title)
-                    .greetingStyle()
-                    .accessibilityAddTraits(.isHeader)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            },
+            header: { PageHeader(title: section.title) },
             row: { exercise in
                 NavigationLink(value: AppRoute.exercise(id: exercise.id)) {
                     ExerciseRowView(

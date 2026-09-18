@@ -74,6 +74,11 @@ public struct ExerciseDetailScreen: View {
             }
         }
         .pageBackground()
+        .keyboardDismissOnTap()
+        // Il carico in "La tua scheda" si digita sul tastierino numerico, che non
+        // ha il tasto invio: la barra "Fatto" deve esserci anche qui.
+        .keyboardDoneToolbar()
+        .navigationBarTitleDisplayModeInline()
         // "Recenti" si aggiorna a transizione finita, non durante il push: scrivere
         // nello store mentre la pagina sta entrando invalidava la radice della
         // libreria proprio mentre l'animazione era in corso, e lo scatto si vedeva.
@@ -145,17 +150,16 @@ public struct ExerciseDetailScreen: View {
             }
             .padding(.horizontal, Theme.Spacing.page)
             .padding(.top, Theme.Spacing.s)
-            .padding(.bottom, Theme.Spacing.xxxl)
+            .padding(.bottom, Theme.Spacing.l)
         }
+        .keyboardDismissable()
     }
 
-    /// Nel picker il dettaglio è una sheet: serve una via d'uscita esplicita.
+    /// Nel picker il dettaglio è una sheet: serve una via d'uscita esplicita, con
+    /// lo stesso "Indietro" di tutte le altre sheet.
     private var backBar: some View {
-        Button("Indietro") { dismiss() }
-            .font(.bodyText)
-            .foregroundStyle(Theme.textSecondary)
-            .buttonStyle(.plain)
-            .frame(minHeight: Theme.Size.minTapTarget, alignment: .leading)
+        SheetBackButton { dismiss() }
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Movimento
@@ -246,22 +250,10 @@ public struct ExerciseDetailScreen: View {
     }
 
     private var customMenu: some View {
-        Menu {
+        EllipsisMenu(accessibilityTitle: "Azioni sull'esercizio") {
             Button("Modifica") { isEditing = true }
             Button("Elimina", role: .destructive) { isConfirmingDelete = true }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(.body, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: Theme.Size.minTapTarget, height: Theme.Size.minTapTarget)
-                .background(Theme.surface, in: Circle())
-                .contentShape(Circle())
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .accessibilityLabel(Text("Azioni sull'esercizio"))
     }
 
     // MARK: - Azione principale

@@ -81,6 +81,12 @@ struct PreviewOptions: Sendable {
     var scenario: PreviewScenario = .sample
     var dark = false
 
+    /// Safe area rigida (predefinita): la cornice non passa alcuna safe area al
+    /// contenuto e comunica le misure alla shell. È il comportamento del telefono
+    /// vero; `--safe-area-morbida` torna al vecchio `safeAreaInset`, utile solo per
+    /// confrontare i due casi.
+    var rigidSafeArea = true
+
     /// Se valorizzato: niente finestra, si scrive un PNG della schermata e si esce
     /// (verifica della cornice senza permessi di registrazione dello schermo).
     var pngPath: String?
@@ -96,6 +102,8 @@ struct PreviewOptions: Sendable {
                 options.scenario = .empty
             case "--scuro":
                 options.dark = true
+            case "--safe-area-morbida":
+                options.rigidSafeArea = false
             default:
                 if argument.hasPrefix("--dispositivo="),
                    let device = PreviewDevice.named(String(argument.dropFirst("--dispositivo=".count))) {
@@ -111,7 +119,7 @@ struct PreviewOptions: Sendable {
     }
 
     static let usage = """
-    Uso: swift run GymPreview [--vuoto] [--scuro] [--dispositivo=se|17|max]
+    Uso: swift run GymPreview [--vuoto] [--scuro] [--safe-area-morbida] [--dispositivo=se|17|max]
          swift run GymPreview --png=<percorso>   # solo un PNG, senza aprire la finestra
     """
 }

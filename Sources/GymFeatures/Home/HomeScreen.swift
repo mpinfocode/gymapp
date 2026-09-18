@@ -37,17 +37,17 @@ public struct HomeScreen: View {
         ScrollViewReader { proxy in
             ScrollView {
                 if let program = app.store.activeProgram {
-                    VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
+                    VStack(alignment: .leading, spacing: 0) {
                         HomeHeader(program: program)
                         HomeDaySection(program: program, initialDayID: initialDayID)
                     }
-                    .padding(.top, Theme.Spacing.l)
-                    .padding(.bottom, Theme.Spacing.xxl)
+                    .padding(.bottom, Theme.Spacing.l)
                     .id(Self.topAnchor)
                 } else {
                     empty.id(Self.topAnchor)
                 }
             }
+            .keyboardDismissable()
             // Ritocco sull'icona del tab già selezionato: si torna in cima.
             .onChange(of: app.router.scrollToTopToken(for: .home)) { _, _ in
                 withAnimation(Theme.Motion.quick) { proxy.scrollTo(Self.topAnchor, anchor: .top) }
@@ -61,15 +61,23 @@ public struct HomeScreen: View {
     // MARK: - Nessuna scheda
 
     private var empty: some View {
-        EmptyStateView(
-            systemImage: "list.bullet.rectangle",
-            title: "Nessuna scheda",
-            message: "Ricopia qui la scheda dell'istruttore: poi la consulti da questa pagina.",
-            actionTitle: "Vai alla scheda",
-            action: { app.router.tab = .program }
-        )
-        .padding(.horizontal, Theme.Spacing.page)
-        .padding(.top, Theme.Spacing.xxxl * 2)
+        VStack(alignment: .leading, spacing: 0) {
+            PageHeader(title: "La tua scheda") {
+                CircleIconButton(systemImage: "gearshape", accessibilityTitle: "Impostazioni") {
+                    app.router.presentSettings()
+                }
+            }
+
+            EmptyStateView(
+                systemImage: "list.bullet.rectangle",
+                title: "Nessuna scheda",
+                message: "Ricopia qui la scheda dell'istruttore: poi la consulti da questa pagina.",
+                actionTitle: "Vai alla scheda",
+                action: { app.router.tab = .program }
+            )
+            .padding(.horizontal, Theme.Spacing.page)
+            .padding(.top, Theme.Spacing.xxxl)
+        }
     }
 }
 
@@ -85,36 +93,15 @@ private struct HomeHeader: View {
     let program: Program
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.m) {
-            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                Text(program.name)
-                    .greetingStyle()
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.7)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isHeader)
-
-                Text(ProgramPresentation.programStatus(program, now: app.now, calendar: app.calendar))
-                    .font(.captionText)
-                    .foregroundStyle(statusColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: Theme.Spacing.s)
-
-            Button {
+        PageHeader(
+            title: program.name,
+            subtitle: ProgramPresentation.programStatus(program, now: app.now, calendar: app.calendar),
+            subtitleColor: statusColor
+        ) {
+            CircleIconButton(systemImage: "gearshape", accessibilityTitle: "Impostazioni") {
                 app.router.presentSettings()
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(.body, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: Theme.Size.minTapTarget, height: Theme.Size.minTapTarget)
-                    .contentShape(Circle())
             }
-            .buttonStyle(PressableButtonStyle())
-            .accessibilityLabel(Text("Impostazioni"))
         }
-        .padding(.horizontal, Theme.Spacing.page)
     }
 
     /// Avviso sobrio: il testo cambia colore solo quando la scheda sta per finire.
@@ -144,6 +131,9 @@ private struct HomeDaySection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
+            MuscleDistributionCompact(programID: program.id, dayID: selectedDay?.id)
+                .padding(.horizontal, Theme.Spacing.page)
+
             if program.days.count > 1 {
                 dayChips
             }

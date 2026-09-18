@@ -30,9 +30,12 @@ public struct SettingsScreen: View {
             }
             .padding(.horizontal, Theme.Spacing.page)
             .padding(.top, Theme.Spacing.l)
-            .padding(.bottom, Theme.Spacing.xxxl)
+            .padding(.bottom, Theme.Spacing.l)
         }
+        .keyboardDismissable()
         .pageBackground()
+        .keyboardDismissOnTap()
+        .keyboardDoneToolbar()
         .task {
             name = app.store.displayName
             await media.refreshSize()
@@ -51,25 +54,7 @@ public struct SettingsScreen: View {
     // MARK: - Intestazione
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.m) {
-            Text("Impostazioni")
-                .greetingStyle()
-                .accessibilityAddTraits(.isHeader)
-
-            Spacer(minLength: Theme.Spacing.s)
-
-            Button {
-                dismiss()
-            } label: {
-                Text("Fine")
-                    .font(.system(.subheadline, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(minHeight: Theme.Size.minTapTarget)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(PressableButtonStyle())
-            .accessibilityLabel(Text("Chiudi le impostazioni"))
-        }
+        SheetHeader(title: "Impostazioni", actionTitle: "Fine") { dismiss() }
     }
 
     // MARK: - Preferenze

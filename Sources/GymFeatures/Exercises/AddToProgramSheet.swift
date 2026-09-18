@@ -34,27 +34,19 @@ struct AddToProgramSheet: View {
             }
             .padding(.horizontal, Theme.Spacing.page)
             .padding(.top, Theme.Spacing.xl)
-            .padding(.bottom, Theme.Spacing.xxxl)
+            .padding(.bottom, Theme.Spacing.l)
         }
+        .keyboardDismissable()
         .pageBackground()
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.m) {
-            Button("Annulla") { dismiss() }
-                .font(.bodyText)
-                .foregroundStyle(Theme.textSecondary)
-                .buttonStyle(.plain)
-                .frame(minHeight: Theme.Size.minTapTarget, alignment: .leading)
-
-            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                Text("Aggiungi alla scheda")
-                    .sectionTitleStyle()
-                    .accessibilityAddTraits(.isHeader)
-                Text(exercise.shortDisplayName)
-                    .captionStyle()
-                    .lineLimit(2)
-            }
+        SheetHeader(
+            title: "Aggiungi alla scheda",
+            subtitle: exercise.shortDisplayName,
+            actionTitle: "Annulla"
+        ) {
+            dismiss()
         }
     }
 

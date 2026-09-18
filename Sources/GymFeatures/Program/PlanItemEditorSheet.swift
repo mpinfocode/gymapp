@@ -49,39 +49,21 @@ public struct PlanItemEditorSheet: View {
                         .padding(.top, Theme.Spacing.xl)
                         .padding(.bottom, Theme.Spacing.l)
                     }
+                    .keyboardDismissable()
 
                     navigationBar
                 }
             }
         }
+        .keyboardDismissOnTap()
         .keyboardDoneToolbar()
     }
 
     // MARK: - Intestazione
 
     private var header: some View {
-        HStack(alignment: .top, spacing: Theme.Spacing.m) {
-            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                Text(exerciseTitle)
-                    .font(.sectionTitle)
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isHeader)
-
-                Text(position)
-                    .font(.captionText)
-                    .foregroundStyle(Theme.textSecondary)
-            }
-
-            Spacer(minLength: 0)
-
-            Button("Fine") { dismiss() }
-                .font(.system(.subheadline, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary)
-                .buttonStyle(.plain)
-                .frame(minHeight: Theme.Size.minTapTarget)
-                .accessibilityLabel(Text("Fine, chiudi l'editor"))
+        SheetHeader(title: exerciseTitle, subtitle: position, actionTitle: "Fine") {
+            dismiss()
         }
     }
 
@@ -403,7 +385,9 @@ public struct PlanItemEditorSheet: View {
         .padding(.horizontal, Theme.Spacing.page)
         .padding(.top, Theme.Spacing.m)
         .padding(.bottom, Theme.Spacing.l)
-        .background(Theme.background)
+        // Fondo pieno proprio, esteso sotto l'home indicator: la barra non dipende
+        // da nessuna propagazione di safe area per stare al posto giusto.
+        .background(Theme.background.ignoresSafeArea(edges: .bottom))
     }
 
     private func canMove(by offset: Int) -> Bool {

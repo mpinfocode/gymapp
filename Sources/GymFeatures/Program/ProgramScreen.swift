@@ -32,6 +32,7 @@ public struct ProgramScreen: View {
                 }
                 .id(Self.topAnchor)
             }
+            .keyboardDismissable()
             // Ritocco sull'icona del tab già selezionato: si torna in cima.
             .onChange(of: app.router.scrollToTopToken(for: .program)) { _, _ in
                 withAnimation(Theme.Motion.quick) { proxy.scrollTo(Self.topAnchor, anchor: .top) }
@@ -55,39 +56,26 @@ public struct ProgramScreen: View {
     // MARK: - Scheda attiva
 
     private func active(_ program: Program) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
-            titleBar
-            card(program)
-            days(of: program)
-            archiveRow
-        }
-        .padding(.horizontal, Theme.Spacing.page)
-        .padding(.top, Theme.Spacing.l)
-        .padding(.bottom, Theme.Spacing.xxl)
-    }
-
-    /// Testata minima: il titolo della sezione e l'ingranaggio delle Impostazioni,
-    /// che la shell presenta da sé (``Router/presentSettings()``).
-    private var titleBar: some View {
-        HStack(alignment: .center, spacing: Theme.Spacing.m) {
-            Text("Scheda")
-                .greetingStyle()
-                .accessibilityAddTraits(.isHeader)
-
-            Spacer(minLength: Theme.Spacing.s)
-
-            Button {
-                app.router.presentSettings()
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(.body, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: Theme.Size.minTapTarget, height: Theme.Size.minTapTarget)
-                    .contentShape(Circle())
+        VStack(alignment: .leading, spacing: 0) {
+            // Una sola testata in tutta l'app: titolo, niente sottotitolo (lo dice
+            // già la card), una sola azione a destra ("+", il giorno nuovo: è
+            // l'unica cosa che si fa spesso qui). Il resto resta nel menu "…"
+            // della card.
+            PageHeader(title: "Scheda") {
+                CircleIconButton(systemImage: "plus", accessibilityTitle: "Aggiungi un giorno") {
+                    addDay(to: program)
+                }
             }
-            .buttonStyle(PressableButtonStyle())
-            .accessibilityLabel(Text("Impostazioni"))
+
+            VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
+                card(program)
+                days(of: program)
+                MuscleDistributionSection(programID: program.id)
+                archiveRow
+            }
+            .padding(.horizontal, Theme.Spacing.page)
         }
+        .padding(.bottom, Theme.Spacing.l)
     }
 
     private func card(_ program: Program) -> some View {
@@ -110,8 +98,7 @@ public struct ProgramScreen: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            ProgramMenu(accessibilityTitle: "Azioni sulla scheda", background: Theme.surfaceElevated) {
-                Button("Aggiungi un giorno") { addDay(to: program) }
+            EllipsisMenu(accessibilityTitle: "Azioni sulla scheda", background: Theme.surfaceElevated) {
                 Button("Modifica i dettagli") { form = .edit(program.id) }
                 Button("Duplica come nuova scheda") {
                     app.store.duplicateProgram(id: program.id, activate: false)
@@ -233,6 +220,17 @@ public struct ProgramScreen: View {
     // MARK: - Nessuna scheda
 
     private var empty: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PageHeader(title: "Scheda") {
+                CircleIconButton(systemImage: "plus", accessibilityTitle: "Crea la tua scheda") {
+                    form = .create
+                }
+            }
+            emptyBody
+        }
+    }
+
+    private var emptyBody: some View {
         VStack(spacing: Theme.Spacing.m) {
             EmptyStateView(
                 systemImage: "list.bullet.rectangle",
@@ -256,33 +254,6 @@ public struct ProgramScreen: View {
             .accessibilityLabel(Text("Carica una scheda d'esempio"))
         }
         .padding(.horizontal, Theme.Spacing.page)
-        .padding(.top, Theme.Spacing.xxxl * 2)
-    }
-}
-
-/// Menu "…" della scheda e del giorno: stesso aspetto ovunque.
-struct ProgramMenu<Content: View>: View {
-
-    var accessibilityTitle: String = "Altre azioni"
-    /// Riempimento del cerchio: bianco sopra il gradiente della card, grigio sul bianco di pagina.
-    var background: Color = Theme.surface
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        Menu {
-            content
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(.body, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: Theme.Size.minTapTarget, height: Theme.Size.minTapTarget)
-                .background(background, in: Circle())
-                .contentShape(Circle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .accessibilityLabel(Text(accessibilityTitle))
+        .padding(.top, Theme.Spacing.xxxl)
     }
 }

@@ -23,30 +23,31 @@ public struct BodyMetricDetailScreen: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
-                Text(metric.displayName)
-                    .sectionTitleStyle()
-                    .accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: 0) {
+                PageHeader(title: metric.displayName)
 
-                CapsuleSegmentedControl(values: ChartRange.allCases, selection: $range, title: \.title)
+                VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
+                    CapsuleSegmentedControl(values: ChartRange.allCases, selection: $range, title: \.title)
 
-                summary
+                    summary
 
-                BodyMetricChart(
-                    points: chart.points,
-                    domain: chart.domain,
-                    metric: metric,
-                    unit: app.unit,
-                    calendar: app.calendar
-                )
+                    BodyMetricChart(
+                        points: chart.points,
+                        domain: chart.domain,
+                        metric: metric,
+                        unit: app.unit,
+                        calendar: app.calendar
+                    )
 
-                list
+                    list
+                }
+                .padding(.horizontal, Theme.Spacing.page)
             }
-            .padding(.horizontal, Theme.Spacing.page)
-            .padding(.top, Theme.Spacing.l)
-            .padding(.bottom, Theme.Spacing.xxxl)
+            .padding(.bottom, Theme.Spacing.l)
         }
+        .keyboardDismissable()
         .pageBackground()
+        .navigationBarTitleDisplayModeInline()
         .task(id: signature) { reload() }
     }
 

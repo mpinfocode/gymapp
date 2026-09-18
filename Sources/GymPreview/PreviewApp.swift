@@ -15,6 +15,7 @@ final class PreviewApp: NSObject, NSApplicationDelegate {
     private var device: PreviewDevice
     private var scenario: PreviewScenario
     private var isDark: Bool
+    private var rigidSafeArea: Bool
 
     private var environment: AppEnvironment?
     private var window: NSWindow?
@@ -24,6 +25,7 @@ final class PreviewApp: NSObject, NSApplicationDelegate {
         device = options.device
         scenario = options.scenario
         isDark = options.dark
+        rigidSafeArea = options.rigidSafeArea
     }
 
     // MARK: - Ciclo di vita
@@ -66,7 +68,12 @@ final class PreviewApp: NSObject, NSApplicationDelegate {
         window.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
 
         let size = DeviceFrameView.windowSize(for: device)
-        let root = DeviceFrameView(device: device, environment: environment, dark: isDark)
+        let root = DeviceFrameView(
+            device: device,
+            environment: environment,
+            dark: isDark,
+            rigidSafeArea: rigidSafeArea
+        )
         let host = NSHostingView(rootView: root)
         host.frame = NSRect(origin: .zero, size: size)
         window.contentView = host
@@ -96,6 +103,13 @@ final class PreviewApp: NSObject, NSApplicationDelegate {
         guard let key = sender.representedObject as? String,
               let device = PreviewDevice.named(key), device != self.device else { return }
         self.device = device
+        applyContent()
+    }
+
+    /// "Safe area rigida": la cornice smette di passare safe area al contenuto e
+    /// comunica le misure alla shell. È il caso che riproduce il telefono vero.
+    @objc private func toggleRigidSafeArea(_ sender: NSMenuItem) {
+        rigidSafeArea.toggle()
         applyContent()
     }
 
@@ -137,6 +151,17 @@ final class PreviewApp: NSObject, NSApplicationDelegate {
             item.representedObject = device.key
             deviceMenu.addItem(item)
         }
+        deviceMenu.addItem(.separator())
+        let rigidItem = NSMenuItem(
+            title: "Safe area rigida",
+            action: #selector(toggleRigidSafeArea(_:)),
+            keyEquivalent: "r"
+        )
+        rigidItem.keyEquivalentModifierMask = [.command, .shift]
+        rigidItem.target = self
+        rigidItem.representedObject = "rigida"
+        deviceMenu.addItem(rigidItem)
+
         deviceItem.submenu = deviceMenu
         main.addItem(deviceItem)
 
@@ -177,7 +202,11 @@ final class PreviewApp: NSObject, NSApplicationDelegate {
     private func updateMenuState() {
         guard let menus else { return }
         for item in menus.device.items {
-            item.state = (item.representedObject as? String) == device.key ? .on : .off
+            if (item.representedObject as? String) == "rigida" {
+                item.state = rigidSafeArea ? .on : .off
+            } else {
+                item.state = (item.representedObject as? String) == device.key ? .on : .off
+            }
         }
         for item in menus.appearance.items {
             let key = (item.representedObject as? String) == "scuro"

@@ -130,21 +130,96 @@ app.router.dismissSettings()
 In tutta l'app esiste **un solo** accesso alle Impostazioni (l'ingranaggio della
 Home): non aggiungerne altri.
 
-## Tab bar e spazio riservato
+## Layout a fasce: tab bar e barra di stato
 
 La tab bar flottante è **sempre visibile**, anche nelle pagine spinte: è l'unico
 modo per ritoccare l'icona di un tab da qualunque profondità.
 
-Lo spazio in fondo lo riserva la shell con `tabBarSafeArea()`, applicato **fuori**
-dal `NavigationStack` di ogni tab (`FloatingTabBarMetrics.reservedHeight` come
-`safeAreaInset(edge: .bottom)`). La safe area ridotta si propaga così anche alle
-pagine spinte: una pagina con un bottone primario ancorato in basso lo mette nel
-proprio `safeAreaInset(edge: .bottom)` e finisce **sopra** la barra, senza aggiungere
-padding a mano. Le schermate **non** devono riservare spazio da sé: sarebbe contato
-due volte.
+La shell è un `VStack(spacing: 0)` con due fasce:
+
+```
+┌─────────────────────────┐
+│  (barra di stato)       │  safe area della finestra, riempita da PageBackground
+├─────────────────────────┤
+│  AREA DEI CONTENUTI     │  i 4 TabSlot / NavigationStack, .clipped()
+│                         │
+├─────────────────────────┤
+│  FASCIA DELLA TAB BAR   │  capsula + margini, sfondo pieno
+│  (home indicator)       │  esteso sotto l'home indicator
+└─────────────────────────┘
+```
+
+**Non esiste più `tabBarSafeArea()`**, e nessuna schermata deve riservare spazio in
+fondo: "il fondo", per qualunque pagina (radici e spinte), è già il bordo superiore
+della fascia. In fondo a un contenuto scrollabile va solo un respiro di
+`Theme.Spacing.l`. Vietati `contentMargins`, padding compensativi e
+`FloatingTabBarMetrics.scrollBottomInset` (residuo, non più usato).
+
+Perché così: su iPhone (iOS 26) la safe area ridotta da un `safeAreaInset`
+**non si propaga** dentro i `NavigationStack` e le loro `ScrollView`/`List`, che
+continuano a considerare "fondo" il bordo fisico dello schermo. Su macOS e in
+`GymPreview` si propagava, ed è per questo che il difetto era già stato "corretto"
+due volte senza successo. Un `VStack` invece impone un **frame**, che è un vincolo
+di layout duro anche per i contenitori UIKit; `.clipped()` chiude il caso limite.
+
+Stessa regola per i **bottoni ancorati in basso**: `ProgramDayEditor` e
+`ExercisePickerSheet` mettono il proprio bottone **sotto** l'elenco in un `VStack`,
+non in un `safeAreaInset`, con fondo pieno
+(`.background(Theme.background.ignoresSafeArea(edges: .bottom))`).
+
+La **barra di stato** non ha bisogno di misure: la shell resta dentro la safe area
+della finestra (quella della radice è l'unica affidabile) e l'area dei contenuti è
+ritagliata, quindi niente può disegnare dove c'è l'orologio; quella zona la riempie
+`PageBackground`, che è pieno e a tutto schermo.
+
+`EnvironmentValues.deviceInsetsOverride` serve **solo** a chi simula un telefono
+senza safe area: `GymPreview` in modalità "Safe area rigida" (menu Dispositivo,
+attiva di default) e le scene `root-*` degli screenshot. In quella modalità la
+cornice non passa **nessuna** safe area al contenuto e comunica le misure alla
+shell, che costruisce le fasce da quei numeri: è il caso del telefono vero, dove
+tutto ciò che sta sotto la shell vive con safe area zero. La vecchia modalità
+(`--safe-area-morbida`) usa `safeAreaInset` e **nasconde** questa classe di difetti.
 
 `router.isAtRoot` resta disponibile (dice se il tab selezionato è alla sua radice)
 ma non governa più la visibilità della barra.
+
+## Una sola intestazione
+
+`Shared/PageHeader.swift` contiene gli unici mattoni ammessi:
+
+| componente | dove |
+| --- | --- |
+| `PageHeader(title:subtitle:subtitleColor:trailing:)` | ogni pagina: radici e pagine spinte |
+| `SheetHeader(title:subtitle:back:backTitle:actionTitle:action:)` | ogni sheet |
+| `CircleIconButton` | l'unica azione di una `PageHeader` (44pt, cerchio `surface`) |
+| `EllipsisMenu` | il menu "…", stessa forma |
+| `SheetBackButton` | "Indietro" dentro una sheet |
+
+Regole: titolo con `greetingStyle` (caso normale, mai `pageTitleStyle` heavy
+maiuscolo), niente overline con la data, **al massimo una** azione a destra.
+`PageHeader` porta con sé i propri margini (pagina 20, `top: s`, `bottom: xl`): si
+mette come primo elemento di un `VStack(spacing: 0)` e il contenuto sotto si
+impagina da sé. Le sheet usano `sheetHeaderMargins()` quando la testata sta dentro
+un elenco scrollabile.
+
+I titoli stanno **sempre nel contenuto**: la barra di navigazione di sistema resta
+senza titolo (`navigationBarTitleDisplayModeInline()`) e serve solo al tasto
+"indietro", uguale in tutte le pagine spinte. La scena `coerenza-intestazioni`
+affianca le quattro radici per controllarlo a colpo d'occhio.
+
+## Tastiera
+
+Regola dell'utente: non deve mai esistere un campo con la tastiera aperta e nessuna
+via d'uscita. Tre vie, sempre insieme:
+
+1. `keyboardDismissable()` su **ogni** `ScrollView`/`List` (è
+   `scrollDismissesKeyboard(.interactively)`): swipe in giù e la tastiera si chiude;
+2. `keyboardDismissOnTap()` sulle schermate con campi: un tocco qualsiasi chiude la
+   tastiera senza rubare il tocco a bottoni e righe (`simultaneousGesture`);
+3. `keyboardDoneToolbar()` su tutti i campi numerici (il tastierino non ha invio).
+
+La shell ignora la safe area della tastiera (`ignoresSafeArea(.keyboard)`): la
+fascia non sale sopra la tastiera e non ruba spazio.
 
 ## Ritocco del tab (torna alla radice e in cima)
 
@@ -210,7 +285,8 @@ swift build                    # deve essere pulito, senza warning
 swift run GymChecks            # test di GymCore
 swift run GymSnapshots         # tutte le scene in docs/preview (fuori da git)
 swift run GymSnapshots misure  # solo le scene il cui nome contiene "misure"
-swift run GymPreview           # l'app in una finestra Mac formato iPhone
+swift run GymPreview           # l'app in una finestra Mac formato iPhone (safe area RIGIDA)
+swift run GymPreview --safe-area-morbida   # vecchio comportamento (safeAreaInset), solo per confronto
 swift run GymPreview --png=/tmp/shell.png   # solo un PNG, senza finestra
 ```
 
