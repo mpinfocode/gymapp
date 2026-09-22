@@ -421,10 +421,20 @@ public enum GeneratorRepair {
                         result.append(id)
                         continue
                     }
-                    // Si cerca una variante dello stesso schema, poi dello stesso gruppo.
+                    // Si cerca una variante dello stesso schema e dello stesso
+                    // tipo: sostituire uno squat con un wall sit "risolve" il
+                    // doppione ma toglie al giorno il suo multiarticolare.
                     days[index] = result
-                    let replacement = bestCandidate(for: index) { $0.pattern == item.pattern }
-                        ?? bestCandidate(for: index) { $0.group == item.group }
+                    // Il sostituto non può essere un esercizio che compare più
+                    // avanti nello stesso giorno: sarebbe un doppione.
+                    let taken = Set(original)
+                    func pick(_ accept: @escaping (GeneratorCandidate) -> Bool) -> GeneratorCandidate? {
+                        bestCandidate(for: index) { !taken.contains($0.id) && accept($0) }
+                    }
+                    let replacement = pick { $0.pattern == item.pattern && $0.kind == item.kind }
+                        ?? pick { $0.group == item.group && $0.kind == item.kind }
+                        ?? pick { $0.pattern == item.pattern }
+                        ?? pick { $0.group == item.group }
                     if let replacement {
                         result.append(replacement.id)
                         repairs.append(

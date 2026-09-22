@@ -304,25 +304,54 @@ public enum GeneratorValidator {
         }
 
         // 2. Pulizia delle voci: id inventati, doppioni, zone vietate.
+        //
+        // Un esercizio vietato da una zona da proteggere non si toglie e basta:
+        // il modello lo aveva messo per un motivo (era la spinta verticale del
+        // giorno), e toglierlo lascerebbe un buco che il completamento riempie
+        // con la prima cosa utile invece che con una spinta verticale. Si
+        // sostituisce sul posto con il miglior candidato dello stesso schema.
         var cleaned: [[GeneratedProgramDraft.Item]] = []
+        var usedInProgram: Set<String> = []
         for (index, items) in dayItems.enumerated() {
             let label = labels.indices.contains(index) ? labels[index] : "Giorno \(index + 1)"
             var seen: Set<String> = []
             var kept: [GeneratedProgramDraft.Item] = []
+
+            /// Il sostituto di un esercizio vietato: stesso schema motorio,
+            /// non già in questo giorno, e possibilmente nuovo per la settimana.
+            func replacement(for pattern: MovementPattern) -> GeneratorCandidate? {
+                let pool = candidates.items(pattern: pattern).filter { !seen.contains($0.id) }
+                return pool.first { !usedInProgram.contains($0.id) } ?? pool.first
+            }
+
             for item in items {
                 guard let candidate = candidates.candidate(id: item.id) else {
-                    repairs.append("\(label): tolto l'esercizio \(item.id), non è fra i candidati.")
+                    // Fuori dai candidati: o è un id inventato, o è un esercizio
+                    // della selezione che una zona da proteggere vieta.
+                    let curated = CuratedExercisePool.byID[item.id]
+                    let forbidden = curated.map { !$0.avoid.isDisjoint(with: answers.protectedZones) } ?? false
+                    guard forbidden, let pattern = curated?.pattern, let pick = replacement(for: pattern) else {
+                        repairs.append(
+                            forbidden
+                                ? "\(label): tolto l'esercizio \(item.id), sollecita una zona da proteggere."
+                                : "\(label): tolto l'esercizio \(item.id), non è fra i candidati."
+                        )
+                        continue
+                    }
+                    seen.insert(pick.id)
+                    usedInProgram.insert(pick.id)
+                    kept.append(numbers(for: pick, parameters: parameters))
+                    repairs.append(
+                        "\(label): l'esercizio \(item.id) sollecita una zona da proteggere, "
+                        + "al suo posto \(pick.shortName) (\(pick.pattern.displayName))."
+                    )
                     continue
                 }
                 guard seen.insert(item.id).inserted else {
                     repairs.append("\(label): tolto il doppione \(candidate.shortName).")
                     continue
                 }
-                if !candidate.avoidZones.isDisjoint(with: answers.protectedZones) {
-                    repairs.append("\(label): tolto \(candidate.shortName), sollecita una zona da proteggere.")
-                    seen.remove(item.id)
-                    continue
-                }
+                usedInProgram.insert(item.id)
                 kept.append(item)
             }
             cleaned.append(kept)

@@ -46,36 +46,30 @@ public final class AIPreferences {
         }
     }
 
-    /// Le due sole scorciatoie che hanno senso offrire: il predefinito e
-    /// "più accurato".
+    /// Le due sole scorciatoie che hanno senso offrire.
     ///
     /// Prima ce n'erano tre, prese dal banco di prova senza averle mai provate
     /// davvero: `openai/gpt-5-nano` ragiona per forza ed è il modello che nella
     /// prima prova reale ha restituito quattro risposte vuote su quattro, e
     /// `mistralai/mistral-small-3.2-24b-instruct` non era mai stato verificato.
-    /// Restano solo id controllati su openrouter.ai il 22/09/2026.
+    /// Restano due id provati dal vivo il 22/09/2026 con chiave vera.
     public static let suggestedModels = [
         AIPreferences.defaultModel,
-        AIPreferences.accurateModel,
+        AIPreferences.economyModel,
     ]
 
-    /// Modello di default: veloce, economico e provato dal vivo
-    /// (1,0 s e $0,0004 a scheda il 18/09/2026).
+    /// Modello di default: il consigliato dopo la prova del 22/09/2026
+    /// (bozze a 99/100 grezzo, 1,1 s, $0,0014 a scheda).
     public static let defaultModel = ProgramGenerationService.defaultModel
 
-    /// Il modello "più accurato": stessa famiglia del predefinito, un gradino
-    /// sopra come capacità, e comunque circa $0,002 a scheda.
-    ///
-    /// Restare in casa Google non è pigrizia: è l'unico fornitore su cui il
-    /// formato compatto è già stato verificato dal vivo, e lo schema stretto
-    /// funziona senza ripieghi.
-    public static let accurateModel = "google/gemini-2.5-flash"
+    /// L'alternativa economica: tre volte meno cara, qualche riparazione in più.
+    public static let economyModel = ProgramGenerationService.economyModel
 
     /// Etichetta da mostrare accanto alla scorciatoia.
     public static func shortcutLabel(for model: String) -> String {
         switch model {
-        case AIPreferences.defaultModel: "Veloce"
-        case AIPreferences.accurateModel: "Più accurato"
+        case AIPreferences.defaultModel: "Consigliato"
+        case AIPreferences.economyModel: "Veloce ed economico"
         default: model.split(separator: "/").last.map(String.init) ?? model
         }
     }

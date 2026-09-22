@@ -254,13 +254,9 @@ enum ModelPricing {
             inputPerMillion: 0.10, outputPerMillion: 0.40, reasoning: .optional,
             note: "provato dal vivo il 18/09/2026: 1,0 s e $0,0004 a scheda, tre schede su tre valide"
         ),
-        "mistralai/mistral-small-2603": Price(
-            inputPerMillion: 0.15, outputPerMillion: 0.60, reasoning: .optional,
-            note: "Mistral Small 4, structured output nativo"
-        ),
         "qwen/qwen3-30b-a3b-instruct-2507": Price(
             inputPerMillion: 0.048, outputPerMillion: 0.193, reasoning: .never,
-            note: "istruito, non pensante: zero rischio di risposta vuota"
+            note: "il più economico che regga: $0,0002 a scheda, ma con un picco a 10 s"
         ),
         // --- fascia accurata, tutti entro un centesimo a scheda ---
         "google/gemini-2.5-flash": Price(
@@ -288,6 +284,10 @@ enum ModelPricing {
             inputPerMillion: 0.05, outputPerMillion: 0.40, reasoning: .mandatory,
             note: "economicissimo ma ragiona per forza: è quello che ha fatto fallire la prima prova"
         ),
+        "mistralai/mistral-small-2603": Price(
+            inputPerMillion: 0.15, outputPerMillion: 0.60, reasoning: .optional,
+            note: "Mistral Small 4: nella prova del 22/09/2026 due errori del servizio su due, fuori dalla fascia veloce"
+        ),
         "inception/mercury-2.5": Price(
             inputPerMillion: 0.04, outputPerMillion: 0.15, reasoning: .optional,
             note: "a diffusione, genera i token in parallelo: il più rapido del catalogo"
@@ -301,14 +301,16 @@ enum ModelPricing {
     /// Tetto di spesa per scheda dichiarato dal PM.
     static let costCeiling = 0.01
 
-    /// La fascia veloce: il predefinito verificato dal vivo più due alternative.
+    /// La fascia veloce: due modelli, tutti e due provati dal vivo.
     ///
     /// I due modelli OpenAI della prima prova non ci sono più: non hanno mai
     /// risposto, e il motivo (nessun fornitore con quei vincoli) adesso si
     /// riconosce dal messaggio invece di scambiarlo per un id inesistente.
+    /// `mistralai/mistral-small-2603` è uscito dopo la prova del 22/09/2026:
+    /// due chiamate su due finite con un errore del servizio, e si abbandona
+    /// dopo due fallimenti uguali.
     static let fastModels = [
         "google/gemini-2.5-flash-lite",
-        "mistralai/mistral-small-2603",
         "qwen/qwen3-30b-a3b-instruct-2507",
     ]
 

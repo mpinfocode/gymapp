@@ -232,10 +232,20 @@ struct DraftScore {
         )
 
         // 3. Zone da proteggere, senza aiuto della riparazione.
+        //
+        // Gli esercizi vietati non sono nemmeno fra i candidati, quindi non
+        // compaiono in `items(_:)`: se li contassimo solo lì, un modello che
+        // sceglie il lento avanti con il bilanciere a una spalla da proteggere
+        // prenderebbe 15/15 su questa voce. Si vanno a cercare nella selezione
+        // curata, che è dove l'etichetta vive.
         var zoneFaults = 0
         for day in dayIDs {
             let candidatesOfDay = items(day)
-            zoneFaults += candidatesOfDay.filter { !$0.avoidZones.isDisjoint(with: answers.protectedZones) }.count
+            zoneFaults += day.filter { id in
+                guard candidates.candidate(id: id) == nil else { return false }
+                guard let curated = CuratedExercisePool.byID[id] else { return false }
+                return !curated.avoid.isDisjoint(with: answers.protectedZones)
+            }.count
             let care = candidatesOfDay.filter(candidates.needsCare).count
             zoneFaults += max(0, care - GeneratorRepair.maxCautionPerDay)
             if let first = candidatesOfDay.first, candidates.needsCare(first) { zoneFaults += 1 }
@@ -360,6 +370,79 @@ enum DraftFormatter {
         return GeneratedProgramDraft(name: GeneratorValidator.defaultName(for: answers), days: days)
     }
 
+    /// La scheda riga per riga con tutto quel che serve a giudicarla a mano:
+    /// id, nome, attrezzo, tipo, livello, schema motorio, zone toccate e in
+    /// quali altri giorni lo stesso esercizio ritorna.
+    ///
+    /// Il titolo breve da solo non basta: "Bench Press" può essere il bilanciere,
+    /// i manubri o il multipower, e sono tre esercizi diversi per una spalla.
+    static func auditLines(
+        draft: GeneratedProgramDraft,
+        answers: GeneratorAnswers,
+        parameters: GeneratorPlanParameters,
+        candidates: GeneratorCandidates
+    ) -> [String] {
+        var output: [String] = []
+        var occurrences: [String: [String]] = [:]
+        for day in draft.days {
+            for item in day.items { occurrences[item.id, default: []].append(day.name) }
+        }
+
+        for day in draft.days {
+            output.append(day.name)
+            for item in day.items {
+                guard let candidate = candidates.candidate(id: item.id) else {
+                    output.append("    \(item.id) · fuori dai candidati")
+                    continue
+                }
+                var zones = "nessuna"
+                let avoided = candidate.avoidZones.intersection(answers.protectedZones)
+                let careful = candidate.cautionZones.intersection(answers.protectedZones)
+                if !avoided.isEmpty {
+                    zones = "VIETATO per " + StressZone.displayOrder.filter(avoided.contains).map(\.displayName).joined(separator: ", ")
+                } else if !careful.isEmpty {
+                    zones = "delicato per " + StressZone.displayOrder.filter(careful.contains).map(\.displayName).joined(separator: ", ")
+                }
+                let elsewhere = (occurrences[item.id] ?? []).filter { $0 != day.name }
+                output.append(
+                    "    \(item.id) · \(candidate.shortName) · \(candidate.equipment)"
+                    + " · \(candidate.kind.displayName.lowercased()) · \(candidate.level.displayName.lowercased())"
+                    + " · \(candidate.pattern.displayName)"
+                    + " · zone: \(zones)"
+                    + " · ripetuto in: \(elsewhere.isEmpty ? "nessun altro giorno" : elsewhere.joined(separator: ", "))"
+                )
+            }
+        }
+
+        // Il livello richiesto, e le coppie di giorni dello stesso tipo.
+        let tooHard = draft.days.flatMap { day in
+            day.items.compactMap { item -> String? in
+                guard let candidate = candidates.candidate(id: item.id) else { return nil }
+                guard candidate.level > answers.experience.maxExerciseLevel else { return nil }
+                return "\(candidate.id) \(candidate.shortName)"
+            }
+        }
+        output.append(
+            "Livello richiesto (\(answers.experience.displayName)): "
+                + (tooHard.isEmpty ? "rispettato da tutti gli esercizi" : "sforato da " + tooHard.joined(separator: ", "))
+        )
+        for first in draft.days.indices {
+            for second in draft.days.indices where second > first {
+                guard GeneratorValidator.areSimilar(first, second, parameters: parameters) else { continue }
+                let shared = Set(draft.days[first].items.map(\.id))
+                    .intersection(draft.days[second].items.map(\.id))
+                    .compactMap { candidates.candidate(id: $0).map { "\($0.id) \($0.shortName)" } }
+                    .sorted()
+                output.append(
+                    "Giorni dello stesso tipo, \(draft.days[first].name) e \(draft.days[second].name): "
+                    + "\(shared.count) esercizi in comune su \(GeneratorRepair.maxSharedBetweenSimilarDays) ammessi"
+                    + (shared.isEmpty ? "" : " (" + shared.joined(separator: ", ") + ")")
+                )
+            }
+        }
+        return output
+    }
+
     static func lines(
         draft: GeneratedProgramDraft,
         candidates: GeneratorCandidates
@@ -369,7 +452,13 @@ enum DraftFormatter {
             output.append("  \(day.name)")
             for item in day.items {
                 let candidate = candidates.candidate(id: item.id)
-                let name = candidate?.shortName ?? "??? (\(item.id))"
+                // Id, nome **e attrezzo**: il titolo breve toglie il prefisso
+                // dell'attrezzo (SPEC §0), così "Bench Press" può essere la
+                // panca con il bilanciere, con i manubri o al multipower. Nel
+                // rapporto quella differenza è esattamente quella che si deve
+                // poter giudicare.
+                let name = candidate.map { "\($0.id) · \($0.shortName) · \($0.equipment)" }
+                    ?? "\(item.id) · esercizio fuori dai candidati"
                 let target: String
                 if let seconds = item.seconds, item.repsMin == nil {
                     target = SetMeasure.formatDuration(seconds)

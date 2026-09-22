@@ -130,6 +130,8 @@ enum FailureKind: String, Sendable {
     case network = "rete"
     case unreadable = "risposta illeggibile"
     case invalid = "scheda non valida"
+    case noEndpoints = "nessun fornitore con quei vincoli"
+    case modelMissing = "modello inesistente"
 
     static func of(_ failure: OpenRouterClient.Failure) -> FailureKind {
         switch failure {
@@ -138,6 +140,10 @@ enum FailureKind: String, Sendable {
         case .truncated: .truncated
         case .transport: .network
         case .malformedResponse: .unreadable
+        // Distinti fra loro e da un errore generico: "errore del servizio" non
+        // dice niente a chi legge il rapporto il giorno dopo.
+        case .noEndpointsForConstraints: .noEndpoints
+        case .modelNotFound: .modelMissing
         default: .http
         }
     }
@@ -160,6 +166,8 @@ struct Attempt {
     let rawDraftLines: [String]
     /// Il voto 0-100 di quella bozza grezza.
     let score: DraftScore?
+    /// La scheda finale riga per riga, per chi la deve giudicare a mano.
+    var auditLines: [String] = []
     let error: String?
     let failureKind: FailureKind
     let usedSchema: Bool
@@ -445,6 +453,10 @@ if options.replay {
                     provider: object["provider"] as? String,
                     validation: validation, repairs: repairs, quality: quality,
                     draftLines: lines, rawDraftLines: rawLines, score: score,
+                    auditLines: DraftFormatter.auditLines(
+                        draft: repaired, answers: scenario.answers,
+                        parameters: parameters, candidates: candidates
+                    ),
                     error: nil, failureKind: validation.isValid ? .none : .invalid, usedSchema: true,
                     isReplay: true
                 )
@@ -539,6 +551,15 @@ if !options.fallbackOnly, let apiKey {
                 guard let completion else {
                     print(String(format: "Tempo: %.2f s · esito: %@", elapsed, kind.rawValue))
                     print("Errore: \(failure ?? "sconosciuto")")
+                    // Anche il fallimento si salva: il messaggio del servizio è
+                    // l'unica cosa che dice *perché* un modello non va, e senza
+                    // di quello il giorno dopo resta solo "errore del servizio".
+                    // Non contiene la chiave: è il testo dell'errore, non la richiesta.
+                    let errorURL = outputDirectory.appendingPathComponent(
+                        "\(scenario.name)__\(model.replacingOccurrences(of: "/", with: "_"))__\(run).errore.txt"
+                    )
+                    try? "\(kind.rawValue)\n\(failure ?? "sconosciuto")\n"
+                        .write(to: errorURL, atomically: true, encoding: .utf8)
                     attempts.append(
                         Attempt(
                             scenario: scenario, model: model, run: run, seconds: elapsed,

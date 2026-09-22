@@ -271,6 +271,10 @@ enum Report {
             }
             report += "Riparazioni: \(attempt.repairs.count)\n"
             for repair in attempt.repairs { report += "- riparazione: \(repair)\n" }
+            if !attempt.auditLines.isEmpty {
+                report += "\nControlli riga per riga (id, nome, attrezzo, tipo, livello, schema, zone, ripetizioni)\n\n"
+                report += "```\n\(attempt.auditLines.joined(separator: "\n"))\n```\n"
+            }
             if let quality = attempt.quality {
                 report += "\n"
                 for finding in quality.findings { report += "- \(finding.line)\n" }

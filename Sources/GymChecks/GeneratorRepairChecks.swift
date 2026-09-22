@@ -130,9 +130,24 @@ private func runRoutingChecks(_ harness: Harness) {
         OpenRouterClient.recommendedReasoning(forModel: "openai/gpt-5-mini") == .minimal
     )
 
+    // Dopo la prova del 22/09/2026 il predefinito è il Flash: bozze quasi già
+    // giuste a $0,0014. Il Flash Lite resta come alternativa economica.
     harness.check(
-        "il modello predefinito è quello provato dal vivo",
-        ProgramGenerationService.defaultModel == "google/gemini-2.5-flash-lite"
+        "il modello predefinito è il consigliato della prova reale",
+        ProgramGenerationService.defaultModel == "google/gemini-2.5-flash"
+    )
+    harness.check(
+        "l'alternativa economica è il Flash Lite",
+        ProgramGenerationService.economyModel == "google/gemini-2.5-flash-lite"
+    )
+    harness.check(
+        "i due non coincidono",
+        ProgramGenerationService.defaultModel != ProgramGenerationService.economyModel
+    )
+    harness.check(
+        "nessuno dei due parte da json_object: reggono lo schema stretto",
+        !OpenRouterClient.prefersJSONObject(forModel: ProgramGenerationService.defaultModel)
+            && !OpenRouterClient.prefersJSONObject(forModel: ProgramGenerationService.economyModel)
     )
 }
 
@@ -448,6 +463,59 @@ private func runProtectedZoneChecks(_ harness: Harness, repository: ExerciseRepo
     harness.check(
         "con la palestra completa i delicati per le spalle non entrano nemmeno nell'elenco (\(careful.count))",
         careful.isEmpty
+    )
+
+    // Un esercizio vietato che il modello mette lo stesso non si toglie e
+    // basta: si sostituisce con uno dello stesso schema motorio, altrimenti il
+    // giorno resta senza la spinta verticale che quell'esercizio copriva.
+    // È la risposta reale del 18/09/2026: `0091`, lento avanti con il
+    // bilanciere, in due giorni su quattro con le spalle da proteggere.
+    let forbidden = draft([
+        ["0289", "0027", "0091", "0017", "0406", "0294", "0200"],
+        ["0043", "0085", "0336", "0585", "0594", "2135"],
+        ["0091", "0017", "0289", "0027", "0383", "0201", "0313"],
+        ["1459", "0381", "0739", "0586", "0594", "0175"],
+    ])
+    harness.check("0091 è vietato con le spalle da proteggere", !candidates.contains(id: "0091"))
+    let (fixed, forbiddenRepairs) = GeneratorValidator.repair(
+        forbidden, answers: answers, parameters: parameters, candidates: candidates
+    )
+    harness.check(
+        "la riparazione dichiara la sostituzione, non solo la rimozione",
+        forbiddenRepairs.contains { $0.contains("0091") && $0.contains("al suo posto") }
+    )
+    for index in [0, 2] {
+        let patterns = fixed.days[index].items.compactMap { candidates.candidate(id: $0.id)?.pattern }
+        harness.check(
+            "\(fixed.days[index].name): la spinta verticale tolta è stata rimpiazzata da un'altra spinta verticale",
+            patterns.contains(.verticalPush)
+        )
+    }
+    harness.check(
+        "nessun esercizio vietato sopravvive alla riparazione",
+        fixed.days.allSatisfy { day in
+            day.items.allSatisfy { item in
+                guard let curated = CuratedExercisePool.byID[item.id] else { return true }
+                return curated.avoid.isDisjoint(with: answers.protectedZones)
+            }
+        }
+    )
+    let fixedValidation = GeneratorValidator.validate(
+        fixed, answers: answers, parameters: parameters, candidates: candidates
+    )
+    harness.check(
+        "la scheda ripulita dai vietati è valida (\(fixedValidation.errors.first ?? ""))",
+        fixedValidation.isValid
+    )
+    // E gli esercizi che il titolo breve fa sembrare a bilanciere non lo sono:
+    // "Bench Press" qui è 0289, manubri.
+    harness.check(
+        "0289 è la panca con i manubri, non con il bilanciere",
+        repository.exercise(id: "0289")?.equipment.lowercased() == "dumbbell"
+    )
+    harness.check(
+        "0027 è il rematore con il bilanciere, vietato solo dalla schiena bassa",
+        CuratedExercisePool.byID["0027"]?.avoid == [.lowerBack]
     )
 
     // Dove invece servono davvero (schiena bassa: le estensioni lombari sono il

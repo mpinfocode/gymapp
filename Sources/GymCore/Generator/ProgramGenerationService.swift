@@ -220,8 +220,18 @@ public enum ProgramGenerationService {
     /// Quante volte si chiede al modello prima di arrendersi (SPEC §0: due).
     public static let maxAttempts = 2
 
-    /// Modello economico di default.
-    public static let defaultModel = "google/gemini-2.5-flash-lite"
+    /// Modello di default.
+    ///
+    /// Dalla prova del 22/09/2026: `google/gemini-2.5-flash` consegna bozze già
+    /// quasi giuste (99/100 grezzo, 0,3 riparazioni a scheda) in 1,1 secondi e
+    /// $0,0014, cioè un settimo del tetto di un centesimo. Il fratello minore
+    /// `flash-lite` costa tre volte meno ma arriva a 92/100 e a sei riparazioni
+    /// nel caso peggiore: per una scheda che si genera una volta ogni due mesi,
+    /// un millesimo di dollaro in più è il compromesso giusto.
+    public static let defaultModel = "google/gemini-2.5-flash"
+
+    /// L'alternativa economica, per chi preferisce spendere meno.
+    public static let economyModel = "google/gemini-2.5-flash-lite"
 
     // MARK: - Preparazione
 
