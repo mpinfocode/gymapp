@@ -347,7 +347,8 @@ private func runGeneratorValidatorChecks(_ harness: Harness, repository: Exercis
     let program = GeneratorValidator.program(from: good, answers: answers, candidates: candidates, now: now)
     harness.check("il programma ha i giorni della scheda", program.days.count == good.days.count)
     harness.check("il programma ha la durata richiesta", program.plannedWeeks == answers.weeks)
-    harness.check("il programma parte oggi", program.normalizedStart() == Fixtures.calendar.startOfDay(for: now))
+    // Stesso calendario da entrambe le parti: il runner CI è in UTC, il fixture usa Europe/Rome.
+    harness.check("il programma parte oggi", program.normalizedStart(calendar: Fixtures.calendar) == Fixtures.calendar.startOfDay(for: now))
     harness.check("il programma è a rotazione", program.mode == .rotation)
     harness.check("nessun carico impostato", program.days.allSatisfy { $0.items.allSatisfy { $0.targetWeightKg == nil } })
     harness.check("il numero di voci coincide", program.totalSets > 0 && program.exerciseIDs.count > 0)
