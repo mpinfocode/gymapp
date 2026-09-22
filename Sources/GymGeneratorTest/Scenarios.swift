@@ -196,16 +196,39 @@ enum Scenarios {
     static var quick: [Scenario] { quickNames.compactMap(named) }
 }
 
-/// Prezzi e note sui modelli, letti da `https://openrouter.ai/api/v1/models` il
-/// 18/09/2026. **Sono indicativi**: cambiano con il fornitore e con il tempo,
-/// servono a dare l'ordine di grandezza del costo di una scheda e a scegliere
-/// chi provare per primo.
+/// Prezzi e note sui modelli. **Sono indicativi**: cambiano con il fornitore e
+/// con il tempo, servono a dare l'ordine di grandezza del costo di una scheda e
+/// a scegliere chi provare per primo.
+///
+/// I prezzi della fascia veloce e di quella accurata sono stati ricontrollati su
+/// openrouter.ai il 22/09/2026 (pagine `openrouter.ai/<slug>`):
+/// `google/gemini-2.5-flash-lite` $0,10/$0,40, `google/gemini-2.5-flash`
+/// $0,30/$2,50, `anthropic/claude-haiku-4.5` $1,00/$5,00, `openai/gpt-5-mini`
+/// $0,25/$2,00, `mistralai/mistral-small-2603` (Mistral Small 4) $0,15/$0,60.
 ///
 /// La colonna che conta davvero è `reasoning`: dopo la prima prova reale (quattro
 /// risposte vuote su quattro con `openai/gpt-5-nano`) i modelli che ragionano per
-/// forza si provano solo con il ragionamento al minimo, e non stanno fra i
-/// predefiniti.
+/// forza si provano solo con il ragionamento al minimo, e con un tetto di token
+/// più alto (``GeneratorPrompt/outputTokenBudget(parameters:model:)``).
 enum ModelPricing {
+
+    /// La fascia di modelli da provare.
+    enum Tier: String, CaseIterable, Sendable {
+        /// Veloci ed economicissimi: è quello che gira sul telefono.
+        case fast
+        /// Più bravi, ancora entro un centesimo di dollaro a scheda.
+        case smart
+        /// Tutti e due, la veloce per prima.
+        case all
+
+        var displayName: String {
+            switch self {
+            case .fast: "veloce"
+            case .smart: "accurata"
+            case .all: "tutte"
+            }
+        }
+    }
 
     /// Come si comporta il modello rispetto al ragionamento interno.
     enum Reasoning: String, Sendable {
@@ -225,68 +248,95 @@ enum ModelPricing {
         let note: String
     }
 
-    /// Tutti con `structured_outputs` fra i `supported_parameters`.
     static let table: [String: Price] = [
-        "inception/mercury-2.5": Price(
-            inputPerMillion: 0.04, outputPerMillion: 0.15, reasoning: .optional,
-            note: "a diffusione, genera i token in parallelo: il più rapido del catalogo"
-        ),
+        // --- fascia veloce ---
         "google/gemini-2.5-flash-lite": Price(
             inputPerMillion: 0.10, outputPerMillion: 0.40, reasoning: .optional,
-            note: "miglior rapporto prezzo/latenza del ramo Google"
-        ),
-        "openai/gpt-4.1-nano": Price(
-            inputPerMillion: 0.10, outputPerMillion: 0.40, reasoning: .never,
-            note: "non ragiona affatto: zero rischio di risposta vuota"
-        ),
-        "openai/gpt-5.4-nano": Price(
-            inputPerMillion: 0.20, outputPerMillion: 1.25, reasoning: .optional,
-            note: "ragionamento già spento di default, structured output nativo"
-        ),
-        "mistralai/ministral-8b-2512": Price(
-            inputPerMillion: 0.15, outputPerMillion: 0.15, reasoning: .never,
-            note: "piccolo e veloce, stesso prezzo in entrata e in uscita"
-        ),
-        "qwen/qwen3-30b-a3b-instruct-2507": Price(
-            inputPerMillion: 0.048, outputPerMillion: 0.193, reasoning: .never,
-            note: "istruito, non pensante"
-        ),
-        "google/gemma-4-31b-it": Price(
-            inputPerMillion: 0.09, outputPerMillion: 0.34, reasoning: .never,
-            note: "molti fornitori, si presta all'ordinamento per velocità"
-        ),
-        "google/gemini-3.1-flash-lite": Price(
-            inputPerMillion: 0.25, outputPerMillion: 1.50, reasoning: .optional,
-            note: "pensato per lavori a bassa latenza, ragionamento minimo di default"
+            note: "provato dal vivo il 18/09/2026: 1,0 s e $0,0004 a scheda, tre schede su tre valide"
         ),
         "mistralai/mistral-small-2603": Price(
             inputPerMillion: 0.15, outputPerMillion: 0.60, reasoning: .optional,
-            note: "erede di mistral-small-3.2"
+            note: "Mistral Small 4, structured output nativo"
+        ),
+        "qwen/qwen3-30b-a3b-instruct-2507": Price(
+            inputPerMillion: 0.048, outputPerMillion: 0.193, reasoning: .never,
+            note: "istruito, non pensante: zero rischio di risposta vuota"
+        ),
+        // --- fascia accurata, tutti entro un centesimo a scheda ---
+        "google/gemini-2.5-flash": Price(
+            inputPerMillion: 0.30, outputPerMillion: 2.50, reasoning: .optional,
+            note: "il fratello maggiore del predefinito: ~$0,002 a scheda"
+        ),
+        "anthropic/claude-haiku-4.5": Price(
+            inputPerMillion: 1.00, outputPerMillion: 5.00, reasoning: .optional,
+            note: "il più caro ammesso, ~$0,0055 a scheda; niente schema stretto, si parte da json_object"
+        ),
+        "openai/gpt-5-mini": Price(
+            inputPerMillion: 0.25, outputPerMillion: 2.00, reasoning: .mandatory,
+            note: "ragiona per forza: `effort: minimal` e tetto di token più alto, ~$0,002 a scheda"
+        ),
+        // --- provati e non più in uso ---
+        "openai/gpt-4.1-nano": Price(
+            inputPerMillion: 0.10, outputPerMillion: 0.40, reasoning: .never,
+            note: "nella prova del 18/09/2026 nessun fornitore lo serviva con i vincoli richiesti"
+        ),
+        "openai/gpt-5.4-nano": Price(
+            inputPerMillion: 0.20, outputPerMillion: 1.25, reasoning: .optional,
+            note: "stesso esito di gpt-4.1-nano: 404 in un decimo di secondo"
         ),
         "openai/gpt-5-nano": Price(
             inputPerMillion: 0.05, outputPerMillion: 0.40, reasoning: .mandatory,
             note: "economicissimo ma ragiona per forza: è quello che ha fatto fallire la prima prova"
         ),
-        "openai/gpt-5-mini": Price(
-            inputPerMillion: 0.25, outputPerMillion: 2.00, reasoning: .mandatory,
-            note: "ragiona per forza"
-        ),
-        "google/gemini-2.5-flash": Price(
-            inputPerMillion: 0.30, outputPerMillion: 2.50, reasoning: .optional,
-            note: "più capace, più caro"
+        "inception/mercury-2.5": Price(
+            inputPerMillion: 0.04, outputPerMillion: 0.15, reasoning: .optional,
+            note: "a diffusione, genera i token in parallelo: il più rapido del catalogo"
         ),
     ]
 
-    /// I modelli provati per impostazione predefinita, **dal più veloce**.
+    /// Il costo di una scheda tipo, per decidere chi può stare nella fascia
+    /// accurata: circa 4.000 token in entrata e 300 in uscita.
+    static let typicalPromptTokens = 4_000
+    static let typicalCompletionTokens = 300
+    /// Tetto di spesa per scheda dichiarato dal PM.
+    static let costCeiling = 0.01
+
+    /// La fascia veloce: il predefinito verificato dal vivo più due alternative.
     ///
-    /// Nessuno dei tre ragiona per forza: è la condizione per stare qui. Il
-    /// primo è il più rapido del catalogo, il secondo il più economico fra i
-    /// veloci, il terzo non ragiona affatto e serve da paracadute.
-    static let defaultModels = [
+    /// I due modelli OpenAI della prima prova non ci sono più: non hanno mai
+    /// risposto, e il motivo (nessun fornitore con quei vincoli) adesso si
+    /// riconosce dal messaggio invece di scambiarlo per un id inesistente.
+    static let fastModels = [
         "google/gemini-2.5-flash-lite",
-        "openai/gpt-4.1-nano",
-        "openai/gpt-5.4-nano",
+        "mistralai/mistral-small-2603",
+        "qwen/qwen3-30b-a3b-instruct-2507",
     ]
+
+    /// La fascia accurata: modelli di classe superiore che restano sotto il
+    /// centesimo a scheda e sotto i 15 secondi.
+    static let smartModels = [
+        "google/gemini-2.5-flash",
+        "anthropic/claude-haiku-4.5",
+        "openai/gpt-5-mini",
+    ]
+
+    static func models(tier: Tier) -> [String] {
+        switch tier {
+        case .fast: fastModels
+        case .smart: smartModels
+        case .all: fastModels + smartModels
+        }
+    }
+
+    /// I modelli provati per impostazione predefinita: la fascia veloce.
+    static let defaultModels = fastModels
+
+    /// Costo stimato di una scheda tipo con quel modello.
+    static func typicalCost(model: String) -> Double? {
+        guard let price = table[model] else { return nil }
+        return Double(typicalPromptTokens) / 1_000_000 * price.inputPerMillion
+            + Double(typicalCompletionTokens) / 1_000_000 * price.outputPerMillion
+    }
 
     /// Come si ordinano i modelli quando li sceglie l'utente: prima chi non
     /// ragiona, poi chi si lascia spegnere, infine chi ragiona per forza.

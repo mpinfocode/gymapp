@@ -461,7 +461,14 @@ private func runGeneratorSchemaChecks(_ harness: Harness) {
     }
 
     harness.check("il prompt di sistema è in italiano e vieta il testo libero", GeneratorPrompt.system.contains("SOLO con un oggetto JSON"))
-    harness.check("il prompt di sistema vieta i trattini lunghi", GeneratorPrompt.system.contains("trattini lunghi"))
+    // Il nome della scheda lo decide il telefono (vedi `GeneratorValidator.defaultName`):
+    // il prompt non chiede più un titolo e quindi non parla più di trattini lunghi.
+    // Al suo posto le regole che la prova reale ha mostrato mancanti.
+    harness.check("il prompt di sistema impone il numero esatto di esercizi", GeneratorPrompt.system.contains("ESATTAMENTE"))
+    harness.check("il prompt di sistema vieta i giorni gemelli", GeneratorPrompt.system.contains("al massimo due esercizi in comune"))
+    harness.check("il prompt di sistema chiede la copertura dei gruppi grandi", GeneratorPrompt.system.contains("lavoro diretto"))
+    harness.check("il prompt di sistema chiede spinta e tirata", GeneratorPrompt.system.contains("almeno una spinta e almeno una tirata"))
+    harness.check("il prompt di sistema dice l'ordine della seduta", GeneratorPrompt.system.contains("cardio per ultimo"))
     harness.check(
         "il prompt di sistema non contiene trattini lunghi",
         !GeneratorPrompt.system.contains("—") && !GeneratorPrompt.system.contains("–")

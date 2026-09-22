@@ -45,6 +45,8 @@ public enum GeneratorValidator {
     /// Bicipiti e tricipiti non ci sono di proposito: con tre tirate e tre
     /// spinte a settimana le braccia lavorano comunque, e pretenderli
     /// esplicitamente farebbe scartare schede corrette da 45 minuti.
+    /// L'addome si aggiunge quando la scheda ha abbastanza esercizi
+    /// (``GeneratorRepair/requiredDirectGroups(parameters:)``).
     public static let requiredWeeklyGroups: [MuscleGroup] = [.chest, .back, .shoulders, .quads]
     /// Almeno uno di questi (catena posteriore).
     public static let requiredPosteriorGroups: Set<MuscleGroup> = [.hamstrings, .glutes]
@@ -72,10 +74,15 @@ public enum GeneratorValidator {
             errors.append("La scheda ha \(draft.days.count) giorni invece di \(expectedDays).")
         }
 
-        let low = max(1, parameters.exercisesPerDay.lowerBound - 1)
-        let high = parameters.exercisesPerDay.upperBound + 1
+        // Il numero di esercizi è un vincolo, non un'indicazione: il tempo per
+        // seduta è quello, e una scheda con due esercizi in meno del previsto
+        // non allena (prova reale del 18/09/2026).
+        let allowed = parameters.allowedExercisesPerDay
+        let low = allowed.lowerBound
+        let high = allowed.upperBound
 
         var groupsTrained: Set<MuscleGroup> = []
+        var patternsTrained: Set<MovementPattern> = []
 
         for (position, day) in draft.days.enumerated() {
             let label = day.name.isEmpty ? "Giorno \(position + 1)" : day.name
@@ -90,9 +97,10 @@ public enum GeneratorValidator {
             }
 
             var seen: Set<String> = []
-            var sawIsolation = false
+            var lastRank = -1
+            var cautionInDay = 0
 
-            for item in day.items {
+            for (itemPosition, item) in day.items.enumerated() {
                 guard let candidate = candidates.candidate(id: item.id) else {
                     errors.append("\(label): l'esercizio \(item.id) non è fra i candidati proposti.")
                     continue
@@ -101,6 +109,7 @@ public enum GeneratorValidator {
                     errors.append("\(label): \(candidate.shortName) compare due volte.")
                 }
                 groupsTrained.insert(candidate.group)
+                patternsTrained.insert(candidate.pattern)
 
                 if !setsRange.contains(item.sets) {
                     errors.append("\(label), \(candidate.shortName): \(item.sets) serie, ammesse da \(setsRange.lowerBound) a \(setsRange.upperBound).")
@@ -109,17 +118,19 @@ public enum GeneratorValidator {
                     if !secondsRange.contains(seconds) {
                         errors.append("\(label), \(candidate.shortName): durata di \(seconds) s fuori dai limiti.")
                     }
-                } else {
-                    guard let minimum = item.repsMin, let maximum = item.repsMax else {
-                        errors.append("\(label), \(candidate.shortName): mancano le ripetizioni.")
-                        continue
-                    }
+                } else if let minimum = item.repsMin, let maximum = item.repsMax {
                     if !repsRange.contains(minimum) || !repsRange.contains(maximum) {
                         errors.append("\(label), \(candidate.shortName): ripetizioni fuori da \(repsRange.lowerBound)-\(repsRange.upperBound).")
                     }
                     if minimum > maximum {
                         errors.append("\(label), \(candidate.shortName): ripetizioni minime maggiori delle massime.")
                     }
+                } else {
+                    // Si segnala e si va avanti: prima questo caso usciva dal
+                    // ciclo con un `continue`, e così una voce senza numeri
+                    // saltava anche i controlli sulle zone protette e
+                    // sull'ordine, che con lei non c'entrano niente.
+                    errors.append("\(label), \(candidate.shortName): mancano le ripetizioni.")
                 }
                 if !restRange.contains(item.rest) {
                     errors.append("\(label), \(candidate.shortName): recupero di \(item.rest) s fuori da \(restRange.lowerBound)-\(restRange.upperBound).")
@@ -132,33 +143,76 @@ public enum GeneratorValidator {
                         errors.append("\(label), \(candidate.shortName): la nota contiene un trattino lungo.")
                     }
                 }
-                if !candidate.stress.isDisjoint(with: answers.protectedZones) {
+                if !candidate.avoidZones.isDisjoint(with: answers.protectedZones) {
                     let zones = StressZone.displayOrder
-                        .filter { candidate.stress.contains($0) && answers.protectedZones.contains($0) }
+                        .filter { candidate.avoidZones.contains($0) && answers.protectedZones.contains($0) }
                         .map(\.displayName)
                     errors.append("\(label), \(candidate.shortName): sollecita una zona da proteggere (\(zones.joined(separator: ", "))).")
                 }
-
-                if candidate.kind == .isolation {
-                    sawIsolation = true
-                } else if sawIsolation {
-                    errors.append("\(label): \(candidate.shortName) è multiarticolare e viene dopo un esercizio di isolamento.")
+                if candidates.needsCare(candidate) {
+                    cautionInDay += 1
+                    if cautionInDay > GeneratorRepair.maxCautionPerDay {
+                        errors.append("\(label), \(candidate.shortName): nella seduta c'è più di un esercizio delicato per le zone da proteggere.")
+                    }
+                    // Aprire la seduta con un esercizio delicato è un errore solo
+                    // se c'era qualcosa di meglio da mettere davanti: a corpo
+                    // libero con le ginocchia da proteggere può capitare che
+                    // tutti i multiarticolari di gamba siano delicati.
+                    let rank = GeneratorRepair.orderRank(candidate)
+                    let hasCleanAlternative = day.items.dropFirst().contains { other in
+                        guard let candidate = candidates.candidate(id: other.id) else { return false }
+                        return !candidates.needsCare(candidate) && GeneratorRepair.orderRank(candidate) == rank
+                    }
+                    if itemPosition == 0, hasCleanAlternative {
+                        errors.append("\(label): \(candidate.shortName) è delicato per le zone da proteggere e apre la seduta.")
+                    }
                 }
+
+                // Ordine: multiarticolari, isolamenti, addome e polpacci, cardio.
+                let rank = GeneratorRepair.orderRank(candidate)
+                if rank < lastRank {
+                    errors.append("\(label): \(candidate.shortName) è fuori posto nell'ordine della seduta.")
+                }
+                lastRank = max(lastRank, rank)
+            }
+        }
+
+        // Giorni gemelli: due sedute dello stesso tipo non possono essere la
+        // stessa seduta con un esercizio scambiato.
+        for first in draft.days.indices {
+            for second in draft.days.indices where second > first {
+                guard areSimilar(first, second, parameters: parameters) else { continue }
+                let shared = Set(draft.days[first].items.map(\.id))
+                    .intersection(draft.days[second].items.map(\.id))
+                guard shared.count > GeneratorRepair.maxSharedBetweenSimilarDays else { continue }
+                let names = shared.compactMap { candidates.candidate(id: $0)?.shortName }.sorted()
+                errors.append(
+                    "\(draft.days[first].name) e \(draft.days[second].name) hanno \(shared.count) esercizi in comune "
+                    + "(\(names.prefix(4).joined(separator: ", "))): sono lo stesso giorno due volte."
+                )
             }
         }
 
         // Copertura settimanale: le schede da due giorni sono esentate, non
         // possono coprire tutto senza diventare maratone.
         if draft.days.count > 2 {
-            for group in requiredWeeklyGroups where !groupsTrained.contains(group) {
+            for group in GeneratorRepair.requiredDirectGroups(parameters: parameters) {
+                guard !groupsTrained.contains(group) else { continue }
+                // Non si pretende quel che i candidati non possono dare.
+                guard !candidates.items(group: group).isEmpty else { continue }
                 errors.append("Nessun esercizio per \(group.displayName) in tutta la settimana.")
             }
-            if groupsTrained.isDisjoint(with: requiredPosteriorGroups) {
+            // Femorali e glutei: vale anche il lavoro indiretto di squat,
+            // affondi e stacchi, che è come li allena davvero una scheda.
+            let posterior = !groupsTrained.isDisjoint(with: requiredPosteriorGroups)
+                || !patternsTrained.isDisjoint(with: GeneratorRepair.posteriorPatterns)
+            if !posterior {
                 errors.append("Nessun esercizio per femorali o glutei in tutta la settimana.")
             }
         }
 
         // Rilievi non bloccanti
+        warnings += balanceWarnings(draft, parameters: parameters, candidates: candidates)
         for group in answers.focusGroups where !groupsTrained.contains(group) {
             warnings.append("\(group.displayName) è indicato come priorità ma non compare nella scheda.")
         }
@@ -172,14 +226,62 @@ public enum GeneratorValidator {
         return GeneratorValidation(errors: errors, warnings: warnings)
     }
 
+    /// Due giorni sono "dello stesso tipo" quando i loro schemi obbligatori si
+    /// somigliano per almeno metà.
+    public static func areSimilar(_ first: Int, _ second: Int, parameters: GeneratorPlanParameters) -> Bool {
+        guard parameters.days.indices.contains(first), parameters.days.indices.contains(second) else { return true }
+        let one = Set(parameters.days[first].requiredPatterns)
+        let two = Set(parameters.days[second].requiredPatterns)
+        guard !one.isEmpty, !two.isEmpty else { return true }
+        return Double(one.intersection(two).count) / Double(min(one.count, two.count)) >= 0.5
+    }
+
+    /// Squilibri fra i blocchi grandi: non bloccano la scheda, ma vanno detti.
+    static func balanceWarnings(
+        _ draft: GeneratedProgramDraft,
+        parameters: GeneratorPlanParameters,
+        candidates: GeneratorCandidates
+    ) -> [String] {
+        var sets: [GeneratorRepair.BigGroup: Int] = [:]
+        for day in draft.days {
+            for item in day.items {
+                guard let candidate = candidates.candidate(id: item.id),
+                      let big = GeneratorRepair.BigGroup.of(candidate.group)
+                else { continue }
+                sets[big, default: 0] += item.sets
+            }
+        }
+        let planned = GeneratorRepair.BigGroup.allCases.filter { big in
+            parameters.days.contains { day in
+                day.allPatterns.contains { pattern in
+                    pattern.primaryGroup.flatMap(GeneratorRepair.BigGroup.of) == big
+                        || (big == .posterior && (pattern == .hinge || pattern == .legIsolation))
+                }
+            }
+        }
+        guard let (low, high) = GeneratorRepair.imbalance(sets, among: planned) else { return [] }
+        return [
+            "\(low.group.displayName) ha \(low.sets) serie dirette contro \(high.sets) di \(high.group.displayName): "
+            + "la scheda è sbilanciata."
+        ]
+    }
+
     // MARK: - Riparazione
 
-    /// Corregge i difetti piccoli e dice cosa ha corretto.
+    /// Sistema la scheda invece di scartarla, e dice cosa ha cambiato.
     ///
-    /// Fa **solo** cose che non cambiano le scelte del modello: riporta i numeri
-    /// nei limiti, toglie i doppioni e gli id inventati, accorcia le note, mette
-    /// i multiarticolari davanti. Non aggiunge esercizi e non cambia i giorni:
-    /// se manca della roba, la risposta va scartata.
+    /// Prima questa funzione faceva solo il minimo indispensabile: numeri nei
+    /// limiti, via i doppioni e gli id inventati, multiarticolari davanti. Era
+    /// una scelta prudente che però lasciava passare schede sbagliate, perché
+    /// **quello che manca il telefono sa benissimo come metterlo**: ha i
+    /// candidati, l'ossatura del giorno e le regole. Una seconda chiamata al
+    /// modello costerebbe altri secondi di attesa per ottenere, nella migliore
+    /// delle ipotesi, la stessa cosa.
+    ///
+    /// Adesso la sequenza è: si ripuliscono le voci illecite, si impongono le
+    /// regole da preparatore (``GeneratorRepair``), si rimettono i numeri.
+    /// Il nome della scheda e i nomi dei giorni li decide sempre il telefono: il
+    /// campo `n` della risposta si legge e si ignora.
     public static func repair(
         _ draft: GeneratedProgramDraft,
         answers: GeneratorAnswers,
@@ -187,47 +289,27 @@ public enum GeneratorValidator {
         candidates: GeneratorCandidates
     ) -> (draft: GeneratedProgramDraft, repairs: [String]) {
         var repairs: [String] = []
-        var result = draft
+        let expectedDays = parameters.days.count
+        let labels = parameters.dayNames
 
-        // Nome
-        var name = result.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if name.contains(where: forbiddenDashes.contains) {
-            name = sanitizeDashes(name)
-            repairs.append("Tolto un trattino lungo dal nome della scheda.")
+        // 1. Numero di giorni: quello chiesto, né uno di più né uno di meno.
+        var dayItems = draft.days.map(\.items)
+        if dayItems.count > expectedDays {
+            repairs.append("Tolti \(dayItems.count - expectedDays) giorni di troppo.")
+            dayItems = Array(dayItems.prefix(expectedDays))
         }
-        if name.count > maxNameLength {
-            name = String(name.prefix(maxNameLength)).trimmingCharacters(in: .whitespaces)
-            repairs.append("Accorciato il nome della scheda.")
+        while dayItems.count < expectedDays {
+            dayItems.append([])
+            repairs.append("Aggiunto il giorno \(labels.indices.contains(dayItems.count - 1) ? labels[dayItems.count - 1] : "\(dayItems.count)"), mancava nella risposta.")
         }
-        if name.isEmpty {
-            name = defaultName(for: answers)
-            repairs.append("Dato un nome alla scheda.")
-        }
-        result.name = name
 
-        let high = parameters.exercisesPerDay.upperBound + 1
-
-        for dayIndex in result.days.indices {
-            var day = result.days[dayIndex]
-            let label = day.name.isEmpty ? "Giorno \(dayIndex + 1)" : day.name
-
-            // Nel formato compatto il modello manda solo gli id: il nome del
-            // giorno lo decide il telefono ed è previsto che manchi, quindi non
-            // si segnala come correzione di un errore.
-            let isCompactDay = !day.items.isEmpty && day.items.allSatisfy(\.isUnspecified)
-
-            if day.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                day.name = parameters.days.indices.contains(dayIndex) ? parameters.days[dayIndex].name : "Giorno \(dayIndex + 1)"
-                if !isCompactDay { repairs.append("Dato un nome al giorno \(dayIndex + 1).") }
-            } else if day.name.contains(where: forbiddenDashes.contains) {
-                day.name = sanitizeDashes(day.name)
-                repairs.append("\(label): tolto un trattino lungo dal nome.")
-            }
-
+        // 2. Pulizia delle voci: id inventati, doppioni, zone vietate.
+        var cleaned: [[GeneratedProgramDraft.Item]] = []
+        for (index, items) in dayItems.enumerated() {
+            let label = labels.indices.contains(index) ? labels[index] : "Giorno \(index + 1)"
             var seen: Set<String> = []
-            var items: [GeneratedProgramDraft.Item] = []
-
-            for var item in day.items {
+            var kept: [GeneratedProgramDraft.Item] = []
+            for item in items {
                 guard let candidate = candidates.candidate(id: item.id) else {
                     repairs.append("\(label): tolto l'esercizio \(item.id), non è fra i candidati.")
                     continue
@@ -236,83 +318,100 @@ public enum GeneratorValidator {
                     repairs.append("\(label): tolto il doppione \(candidate.shortName).")
                     continue
                 }
-                if !candidate.stress.isDisjoint(with: answers.protectedZones) {
+                if !candidate.avoidZones.isDisjoint(with: answers.protectedZones) {
                     repairs.append("\(label): tolto \(candidate.shortName), sollecita una zona da proteggere.")
                     seen.remove(item.id)
                     continue
                 }
-
-                // Formato compatto: il modello ha mandato solo l'id, i numeri
-                // li mette il telefono. Non è una correzione di un errore del
-                // modello, quindi non finisce nell'elenco delle riparazioni:
-                // altrimenti l'utente vedrebbe quaranta righe che dicono la
-                // stessa cosa ovvia.
-                if item.isUnspecified {
-                    item = numbers(for: candidate, parameters: parameters)
-                }
-
-                if !setsRange.contains(item.sets) {
-                    item.sets = item.sets.clamped(to: setsRange)
-                    repairs.append("\(label), \(candidate.shortName): serie riportate a \(item.sets).")
-                }
-                if item.seconds != nil, item.repsMin == nil {
-                    let seconds = (item.seconds ?? 0).clamped(to: secondsRange)
-                    if seconds != item.seconds {
-                        repairs.append("\(label), \(candidate.shortName): durata riportata a \(seconds) s.")
-                    }
-                    item.seconds = seconds
-                } else {
-                    let fallback = parameters.reps(for: candidate.kind)
-                    var minimum = (item.repsMin ?? fallback.lowerBound).clamped(to: repsRange)
-                    var maximum = (item.repsMax ?? fallback.upperBound).clamped(to: repsRange)
-                    if minimum > maximum {
-                        swap(&minimum, &maximum)
-                        repairs.append("\(label), \(candidate.shortName): ripetizioni minime e massime invertite.")
-                    }
-                    if minimum != item.repsMin || maximum != item.repsMax {
-                        if item.repsMin != nil || item.repsMax != nil {
-                            repairs.append("\(label), \(candidate.shortName): ripetizioni riportate a \(minimum)-\(maximum).")
-                        } else {
-                            repairs.append("\(label), \(candidate.shortName): aggiunte le ripetizioni mancanti.")
-                        }
-                    }
-                    item.repsMin = minimum
-                    item.repsMax = maximum
-                    item.seconds = nil
-                }
-                if !restRange.contains(item.rest) {
-                    item.rest = item.rest.clamped(to: restRange)
-                    repairs.append("\(label), \(candidate.shortName): recupero riportato a \(item.rest) s.")
-                }
-                if var note = item.note, !note.isEmpty {
-                    let original = note
-                    note = sanitizeDashes(note)
-                    if note.count > maxNoteLength {
-                        note = String(note.prefix(maxNoteLength)).trimmingCharacters(in: .whitespaces)
-                    }
-                    if note != original { repairs.append("\(label), \(candidate.shortName): nota sistemata.") }
-                    item.note = note
-                }
-                items.append(item)
+                kept.append(item)
             }
-
-            // Multiarticolari davanti, ordine relativo invariato.
-            let sorted = stableCompoundFirst(items, candidates: candidates)
-            if sorted.map(\.id) != items.map(\.id) {
-                repairs.append("\(label): multiarticolari rimessi davanti agli isolamenti.")
-            }
-            items = sorted
-
-            if items.count > high {
-                repairs.append("\(label): tolti \(items.count - high) esercizi di troppo.")
-                items = Array(items.prefix(high))
-            }
-
-            day.items = items
-            result.days[dayIndex] = day
+            cleaned.append(kept)
         }
 
-        return (result, repairs)
+        // 3. Le regole da preparatore.
+        let enforced = GeneratorRepair.enforce(
+            dayIDs: cleaned.map { $0.map(\.id) },
+            answers: answers,
+            parameters: parameters,
+            candidates: candidates,
+            labels: labels
+        )
+        repairs += enforced.repairs
+
+        // 4. I numeri: quelli del modello se li aveva mandati, altrimenti
+        //    quelli calcolati dal telefono.
+        var days: [GeneratedProgramDraft.Day] = []
+        for (index, ids) in enforced.days.enumerated() {
+            let label = labels.indices.contains(index) ? labels[index] : "Giorno \(index + 1)"
+            let original = Dictionary(cleaned[index].map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            var items: [GeneratedProgramDraft.Item] = []
+            for id in ids {
+                guard let candidate = candidates.candidate(id: id) else { continue }
+                var item = original[id] ?? numbers(for: candidate, parameters: parameters)
+                if item.isUnspecified { item = numbers(for: candidate, parameters: parameters) }
+                normalize(&item, candidate: candidate, label: label, parameters: parameters, repairs: &repairs)
+                items.append(item)
+            }
+            days.append(GeneratedProgramDraft.Day(name: label, items: items))
+        }
+
+        return (GeneratedProgramDraft(name: defaultName(for: answers), days: days), repairs)
+    }
+
+    /// Riporta i numeri di una voce dentro i limiti, dichiarando le correzioni.
+    ///
+    /// Le voci del formato compatto arrivano qui già complete (i numeri li ha
+    /// messi il telefono un attimo prima): non producono nessuna riga di
+    /// riparazione, altrimenti l'utente ne leggerebbe quaranta tutte uguali.
+    static func normalize(
+        _ item: inout GeneratedProgramDraft.Item,
+        candidate: GeneratorCandidate,
+        label: String,
+        parameters: GeneratorPlanParameters,
+        repairs: inout [String]
+    ) {
+        if !setsRange.contains(item.sets) {
+            item.sets = item.sets.clamped(to: setsRange)
+            repairs.append("\(label), \(candidate.shortName): serie riportate a \(item.sets).")
+        }
+        if item.seconds != nil, item.repsMin == nil {
+            let seconds = (item.seconds ?? 0).clamped(to: secondsRange)
+            if seconds != item.seconds {
+                repairs.append("\(label), \(candidate.shortName): durata riportata a \(seconds) s.")
+            }
+            item.seconds = seconds
+        } else {
+            let fallback = parameters.reps(for: candidate.kind)
+            var minimum = (item.repsMin ?? fallback.lowerBound).clamped(to: repsRange)
+            var maximum = (item.repsMax ?? fallback.upperBound).clamped(to: repsRange)
+            if minimum > maximum {
+                swap(&minimum, &maximum)
+                repairs.append("\(label), \(candidate.shortName): ripetizioni minime e massime invertite.")
+            }
+            if minimum != item.repsMin || maximum != item.repsMax {
+                if item.repsMin != nil || item.repsMax != nil {
+                    repairs.append("\(label), \(candidate.shortName): ripetizioni riportate a \(minimum)-\(maximum).")
+                } else {
+                    repairs.append("\(label), \(candidate.shortName): aggiunte le ripetizioni mancanti.")
+                }
+            }
+            item.repsMin = minimum
+            item.repsMax = maximum
+            item.seconds = nil
+        }
+        if !restRange.contains(item.rest) {
+            item.rest = item.rest.clamped(to: restRange)
+            repairs.append("\(label), \(candidate.shortName): recupero riportato a \(item.rest) s.")
+        }
+        if var note = item.note, !note.isEmpty {
+            let original = note
+            note = sanitizeDashes(note)
+            if note.count > maxNoteLength {
+                note = String(note.prefix(maxNoteLength)).trimmingCharacters(in: .whitespaces)
+            }
+            if note != original { repairs.append("\(label), \(candidate.shortName): nota sistemata.") }
+            item.note = note
+        }
     }
 
     /// I numeri di una voce di cui il modello ha mandato solo l'id.
@@ -322,7 +421,7 @@ public enum GeneratorValidator {
     /// delle ripetizioni per plank e cardio. Così una scheda scelta dall'AI e
     /// una costruita dal telefono hanno la stessa programmazione, e l'unica
     /// differenza è la scelta degli esercizi.
-    static func numbers(
+    public static func numbers(
         for candidate: GeneratorCandidate,
         parameters: GeneratorPlanParameters
     ) -> GeneratedProgramDraft.Item {
@@ -337,16 +436,16 @@ public enum GeneratorValidator {
         return FallbackProgramGenerator.makeItem(for: candidate, parameters: parameters)
     }
 
-    /// Multiarticolari prima degli isolamenti, mantenendo l'ordine originale
-    /// dentro ciascun gruppo. Il cardio resta in fondo.
+    /// L'ordine della seduta: multiarticolari pesanti, poi isolamenti, poi
+    /// addome e polpacci, infine il cardio. Dentro ciascun gruppo l'ordine
+    /// originale non si tocca.
     static func stableCompoundFirst(
         _ items: [GeneratedProgramDraft.Item],
         candidates: GeneratorCandidates
     ) -> [GeneratedProgramDraft.Item] {
         func rank(_ item: GeneratedProgramDraft.Item) -> Int {
             guard let candidate = candidates.candidate(id: item.id) else { return 1 }
-            if candidate.pattern == .cardio { return 2 }
-            return candidate.kind == .compound ? 0 : 1
+            return GeneratorRepair.orderRank(candidate)
         }
         return items.enumerated()
             .sorted { lhs, rhs in
@@ -365,9 +464,15 @@ public enum GeneratorValidator {
         return result
     }
 
-    /// Nome di ripiego per la scheda.
+    /// Il nome della scheda, deciso dal telefono.
+    ///
+    /// Non è un ripiego: è **il** nome. I modelli economici propongono titoli da
+    /// volantino ("Massa Total Body", "Forma Fisica Generale") che non dicono
+    /// niente in più della divisione e dei giorni, e ogni tanto ci infilano un
+    /// trattino lungo che il design vieta. Il campo `n` della risposta si legge
+    /// (fa parte del contratto con lo schema) e si ignora.
     public static func defaultName(for answers: GeneratorAnswers) -> String {
-        "\(answers.split.displayName) \(answers.daysPerWeek) giorni"
+        "\(answers.split.displayName) · \(answers.daysPerWeek) giorni"
     }
 
     // MARK: - Conversione in Program

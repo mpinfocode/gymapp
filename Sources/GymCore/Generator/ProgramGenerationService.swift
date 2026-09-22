@@ -312,13 +312,14 @@ public enum ProgramGenerationService {
         let (parameters, candidates) = prepare(answers: answers, library: library)
         let system = GeneratorPrompt.system
         let user = GeneratorPrompt.user(answers: answers, parameters: parameters, candidates: candidates)
-        let maxTokens = GeneratorPrompt.outputTokenBudget(parameters: parameters)
+        let maxTokens = GeneratorPrompt.outputTokenBudget(parameters: parameters, model: model)
         // Scadenza **condivisa**: il primo tentativo lento toglie tempo al
         // secondo invece di sommarcisi, e l'utente non aspetta mai il doppio.
         let deadline = OpenRouterClient.Deadline()
 
         // Una volta che un modello ha rifiutato lo schema stretto non lo si ripropone.
-        var format = OpenRouterClient.ResponseFormat.jsonSchema
+        var format: OpenRouterClient.ResponseFormat =
+            OpenRouterClient.prefersJSONObject(forModel: model) ? .jsonObject : .jsonSchema
 
         for attempt in 1...max(1, maxAttempts) {
             try Task.checkCancellation()
@@ -432,6 +433,10 @@ public enum ProgramGenerationService {
         case .paymentRequired: .paymentRequired
         case .rateLimited: .rateLimited
         case .modelNotFound: .modelNotFound(model)
+        // Il modello c'è ma nessun fornitore lo serve alle nostre condizioni: il
+        // client ha già riprovato una volta senza vincoli, quindi qui è finita.
+        case .noEndpointsForConstraints:
+            .modelUnsuitable(failure.description + " Cambia modello in Impostazioni.")
         case .transport: .offline
         case .emptyResponse, .malformedResponse: .invalidResponse
         case .timeout: .tooSlow

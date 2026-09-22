@@ -46,16 +46,39 @@ public final class AIPreferences {
         }
     }
 
-    /// Modelli proposti come scorciatoia: gli stessi id del banco di prova
-    /// (`GymGeneratorTest`), tutti economici.
+    /// Le due sole scorciatoie che hanno senso offrire: il predefinito e
+    /// "più accurato".
+    ///
+    /// Prima ce n'erano tre, prese dal banco di prova senza averle mai provate
+    /// davvero: `openai/gpt-5-nano` ragiona per forza ed è il modello che nella
+    /// prima prova reale ha restituito quattro risposte vuote su quattro, e
+    /// `mistralai/mistral-small-3.2-24b-instruct` non era mai stato verificato.
+    /// Restano solo id controllati su openrouter.ai il 22/09/2026.
     public static let suggestedModels = [
-        "google/gemini-2.5-flash-lite",
-        "openai/gpt-5-nano",
-        "mistralai/mistral-small-3.2-24b-instruct",
+        AIPreferences.defaultModel,
+        AIPreferences.accurateModel,
     ]
 
-    /// Modello di default: il più economico che regga lo schema stretto.
+    /// Modello di default: veloce, economico e provato dal vivo
+    /// (1,0 s e $0,0004 a scheda il 18/09/2026).
     public static let defaultModel = ProgramGenerationService.defaultModel
+
+    /// Il modello "più accurato": stessa famiglia del predefinito, un gradino
+    /// sopra come capacità, e comunque circa $0,002 a scheda.
+    ///
+    /// Restare in casa Google non è pigrizia: è l'unico fornitore su cui il
+    /// formato compatto è già stato verificato dal vivo, e lo schema stretto
+    /// funziona senza ripieghi.
+    public static let accurateModel = "google/gemini-2.5-flash"
+
+    /// Etichetta da mostrare accanto alla scorciatoia.
+    public static func shortcutLabel(for model: String) -> String {
+        switch model {
+        case AIPreferences.defaultModel: "Veloce"
+        case AIPreferences.accurateModel: "Più accurato"
+        default: model.split(separator: "/").last.map(String.init) ?? model
+        }
+    }
 
     /// Chiave sotto cui il modello sta in `UserDefaults`.
     static let modelDefaultsKey = "it.mpinformatica.gymapp.generator.model"

@@ -170,8 +170,195 @@ struct QualityReport {
     }
 }
 
+/// Il voto della bozza **grezza**, quella che il modello ha consegnato prima
+/// che il telefono la sistemasse.
+///
+/// Serve a rispondere alla sola domanda che conta quando si sceglie un modello:
+/// *quanto lavoro deve fare la riparazione per rendere presentabile quello che
+/// mi manda?* Dopo la riparazione le schede sono tutte a posto, quindi
+/// confrontarle non direbbe niente.
+struct DraftScore {
+
+    struct Part {
+        let name: String
+        let earned: Int
+        let weight: Int
+        let detail: String
+
+        var line: String { "\(name): \(earned)/\(weight)\(detail.isEmpty ? "" : " (\(detail))")" }
+    }
+
+    let parts: [Part]
+
+    var total: Int { parts.reduce(0) { $0 + $1.earned } }
+    var maximum: Int { parts.reduce(0) { $0 + $1.weight } }
+
+    /// Voto della bozza grezza, ricostruita dai soli id della risposta.
+    static func make(
+        dayIDs: [[String]],
+        answers: GeneratorAnswers,
+        parameters: GeneratorPlanParameters,
+        candidates: GeneratorCandidates
+    ) -> DraftScore {
+        var parts: [Part] = []
+        let target = parameters.targetExercisesPerDay
+        let allowed = parameters.allowedExercisesPerDay
+
+        func items(_ day: [String]) -> [GeneratorCandidate] {
+            day.compactMap { candidates.candidate(id: $0) }
+        }
+
+        // 1. Numero di esercizi per giorno: il vincolo più tradito.
+        let exact = dayIDs.filter { $0.count == target }.count
+        let near = dayIDs.filter { $0.count != target && allowed.contains($0.count) }.count
+        let countScore = dayIDs.isEmpty ? 0 : Int((Double(exact * 20 + near * 10) / Double(dayIDs.count)).rounded())
+        parts.append(
+            Part(
+                name: "esercizi giusti", earned: min(20, countScore), weight: 20,
+                detail: "\(exact) giorni su \(dayIDs.count) con \(target) esercizi"
+            )
+        )
+
+        // 2. Id leciti: esistono, sono fra i candidati, quindi rispettano
+        //    attrezzatura ed esperienza.
+        let total = dayIDs.reduce(0) { $0 + $1.count }
+        let known = dayIDs.reduce(0) { $0 + items($1).count }
+        let levelScore = total == 0 ? 0 : Int((Double(known) / Double(total) * 15).rounded())
+        parts.append(
+            Part(
+                name: "adeguatezza a livello e attrezzatura", earned: levelScore, weight: 15,
+                detail: "\(known) id validi su \(total)"
+            )
+        )
+
+        // 3. Zone da proteggere, senza aiuto della riparazione.
+        var zoneFaults = 0
+        for day in dayIDs {
+            let candidatesOfDay = items(day)
+            zoneFaults += candidatesOfDay.filter { !$0.avoidZones.isDisjoint(with: answers.protectedZones) }.count
+            let care = candidatesOfDay.filter(candidates.needsCare).count
+            zoneFaults += max(0, care - GeneratorRepair.maxCautionPerDay)
+            if let first = candidatesOfDay.first, candidates.needsCare(first) { zoneFaults += 1 }
+        }
+        let zoneScore = answers.protectedZones.isEmpty ? 15 : max(0, 15 - zoneFaults * 5)
+        parts.append(
+            Part(
+                name: "zone protette", earned: zoneScore, weight: 15,
+                detail: answers.protectedZones.isEmpty ? "nessuna richiesta" : "\(zoneFaults) scivoloni"
+            )
+        )
+
+        // 4. Varietà fra giorni dello stesso tipo.
+        var excess = 0
+        var pairs = 0
+        for first in dayIDs.indices {
+            for second in dayIDs.indices where second > first {
+                guard GeneratorValidator.areSimilar(first, second, parameters: parameters) else { continue }
+                pairs += 1
+                let shared = Set(dayIDs[first]).intersection(dayIDs[second]).count
+                excess += max(0, shared - GeneratorRepair.maxSharedBetweenSimilarDays)
+            }
+        }
+        let twinScore = pairs == 0 ? 15 : max(0, 15 - excess * 4)
+        parts.append(
+            Part(
+                name: "varietà fra giorni gemelli", earned: twinScore, weight: 15,
+                detail: pairs == 0 ? "nessuna coppia di giorni simili" : "\(excess) doppioni di troppo"
+            )
+        )
+
+        // 5. Copertura dei gruppi.
+        var trained: Set<MuscleGroup> = []
+        var patterns: Set<MovementPattern> = []
+        for day in dayIDs {
+            for item in items(day) {
+                trained.insert(item.group)
+                patterns.insert(item.pattern)
+            }
+        }
+        var wanted = GeneratorRepair.requiredDirectGroups(parameters: parameters)
+        let posterior = !trained.isDisjoint(with: GeneratorValidator.requiredPosteriorGroups)
+            || !patterns.isDisjoint(with: GeneratorRepair.posteriorPatterns)
+        let covered = wanted.filter(trained.contains).count + (posterior ? 1 : 0)
+        wanted.append(.hamstrings)
+        let coverScore = Int((Double(covered) / Double(wanted.count) * 15).rounded())
+        parts.append(
+            Part(
+                name: "copertura settimanale", earned: coverScore, weight: 15,
+                detail: "\(covered) gruppi su \(wanted.count)"
+            )
+        )
+
+        // 6. Equilibrio fra i blocchi grandi.
+        var sets: [GeneratorRepair.BigGroup: Int] = [:]
+        for day in dayIDs {
+            for item in items(day) {
+                guard let big = GeneratorRepair.BigGroup.of(item.group) else { continue }
+                sets[big, default: 0] += parameters.sets(for: item.kind)
+            }
+        }
+        let planned = GeneratorRepair.BigGroup.allCases.filter { big in
+            parameters.days.contains { day in
+                day.allPatterns.contains { pattern in
+                    pattern.primaryGroup.flatMap(GeneratorRepair.BigGroup.of) == big
+                        || (big == .posterior && (pattern == .hinge || pattern == .legIsolation))
+                }
+            }
+        }
+        let imbalance = GeneratorRepair.imbalance(sets, among: planned)
+        parts.append(
+            Part(
+                name: "equilibrio", earned: imbalance == nil ? 10 : 0, weight: 10,
+                detail: imbalance.map { "\($0.low.group.displayName) \($0.low.sets) contro \($0.high.group.displayName) \($0.high.sets)" } ?? "nessuno squilibrio"
+            )
+        )
+
+        // 7. Ordine della seduta.
+        var wrongOrder = 0
+        for day in dayIDs {
+            var last = -1
+            for item in items(day) {
+                let rank = GeneratorRepair.orderRank(item)
+                if rank < last { wrongOrder += 1 }
+                last = max(last, rank)
+            }
+        }
+        parts.append(
+            Part(
+                name: "ordine della seduta", earned: max(0, 10 - wrongOrder * 3), weight: 10,
+                detail: wrongOrder == 0 ? "corretto" : "\(wrongOrder) esercizi fuori posto"
+            )
+        )
+
+        return DraftScore(parts: parts)
+    }
+}
+
 /// Stampa compatta di una scheda.
 enum DraftFormatter {
+
+    /// Ricostruisce la bozza **grezza** dai soli id della risposta, mettendoci
+    /// i numeri del telefono: serve a mostrare nel rapporto cosa aveva
+    /// consegnato il modello, prima di ogni riparazione.
+    static func hydrate(
+        dayIDs: [[String]],
+        answers: GeneratorAnswers,
+        parameters: GeneratorPlanParameters,
+        candidates: GeneratorCandidates
+    ) -> GeneratedProgramDraft {
+        let days = dayIDs.enumerated().map { index, ids in
+            GeneratedProgramDraft.Day(
+                name: parameters.dayNames.indices.contains(index) ? parameters.dayNames[index] : "Giorno \(index + 1)",
+                items: ids.map { id in
+                    guard let candidate = candidates.candidate(id: id) else {
+                        return GeneratedProgramDraft.Item(id: id, sets: 3, repsMin: 8, repsMax: 12, rest: 90)
+                    }
+                    return GeneratorValidator.numbers(for: candidate, parameters: parameters)
+                }
+            )
+        }
+        return GeneratedProgramDraft(name: GeneratorValidator.defaultName(for: answers), days: days)
+    }
 
     static func lines(
         draft: GeneratedProgramDraft,

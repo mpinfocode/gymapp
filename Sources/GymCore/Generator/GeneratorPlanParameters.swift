@@ -160,6 +160,23 @@ public struct GeneratorPlanParameters: Sendable, Hashable {
     /// Nomi dei giorni, nell'ordine.
     public var dayNames: [String] { days.map(\.name) }
 
+    /// Quanti esercizi sono ammessi in una seduta: il numero a cui si punta,
+    /// più o meno uno.
+    ///
+    /// Prima il validatore allargava ancora l'intervallo di un esercizio per
+    /// parte, "per non essere pignoli": è così che una full body da 60 minuti
+    /// con quattro esercizi al giorno è stata dichiarata valida (prova reale del
+    /// 18/09/2026). Il tempo a disposizione è un vincolo vero in tutte e due le
+    /// direzioni, e sotto il minimo la scheda non allena, sopra il massimo non
+    /// si finisce.
+    public var allowedExercisesPerDay: ClosedRange<Int> {
+        max(1, targetExercisesPerDay - 1)...(targetExercisesPerDay + 1)
+    }
+
+    /// Esercizi previsti in tutta la settimana: serve a decidere quali gruppi
+    /// si può pretendere di allenare direttamente.
+    public var weeklyExerciseBudget: Int { days.count * targetExercisesPerDay }
+
     /// Riepilogo in italiano dei vincoli numerici, per il prompt e per i rapporti.
     public var summaryLines: [String] {
         var lines = [

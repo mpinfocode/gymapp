@@ -35,10 +35,20 @@ public enum GeneratorPrompt {
     di codice, senza commenti.
     2. Usa esclusivamente gli id presenti nell'elenco dei candidati. Non inventare id, \
     non inventare esercizi, non usare nomi al posto degli id.
-    3. In ogni giorno metti prima i multiarticolari (M) e poi gli isolamenti (I).
-    4. Non ripetere lo stesso id due volte nello stesso giorno.
-    5. Serie, ripetizioni, recuperi e carichi non li scrivi tu: li calcola l'app.
-    6. Il nome della scheda è in italiano, breve, senza trattini lunghi.
+    3. Metti in ogni giorno ESATTAMENTE il numero di id richiesto: né uno in più né uno \
+    in meno. È il vincolo più importante, viene prima di ogni altra preferenza.
+    4. Ordine di ogni giorno: prima i multiarticolari (M), poi gli isolamenti (I), poi \
+    addome e polpacci, e il cardio per ultimo.
+    5. Non ripetere lo stesso id due volte nello stesso giorno.
+    6. Due giorni dello stesso tipo (parte alta A e B, spinta A e B, total body A e B) \
+    possono avere al massimo due esercizi in comune, e solo se sono fondamentali: per il \
+    resto scegli varianti diverse dello stesso schema motorio (lat machine invece di \
+    trazioni assistite, spinte con i manubri invece di chest press, pressa invece di squat).
+    7. In una settimana ogni gruppo muscolare grande vuole del lavoro diretto: petto, \
+    dorso, spalle, quadricipiti, femorali e glutei, e l'addome quando c'è spazio. Nessun \
+    gruppo grande deve avere meno della metà degli esercizi del gruppo più allenato.
+    8. In ogni giorno di parte alta o total body metti almeno una spinta e almeno una tirata.
+    9. Serie, ripetizioni, recuperi, carichi e nomi dei giorni non li scrivi tu: li calcola l'app.
     """
 
     /// Il messaggio utente, costruito dalle risposte.
@@ -57,51 +67,65 @@ public enum GeneratorPrompt {
             let patterns = day.requiredPatterns.map(\.displayName).joined(separator: ", ")
             return "\(index + 1). \(day.name): \(patterns)"
         }
+        let target = parameters.targetExercisesPerDay
         blocks.append(
             "GIORNI, in questo ordine\n"
             + structure.joined(separator: "\n")
-            + "\nDa \(parameters.exercisesPerDay.lowerBound) a \(parameters.exercisesPerDay.upperBound) "
-            + "esercizi per giorno. Gli schemi motori elencati sono l'ossatura del giorno: "
-            + "seguili finché ci sono candidati adatti, poi completa con quel che serve."
+            + "\nESATTAMENTE \(target) id per giorno, in tutti i \(parameters.days.count) giorni "
+            + "(in tutto \(parameters.weeklyExerciseBudget) id). "
+            + "Gli schemi motori elencati sono l'ossatura del giorno: seguili finché ci sono "
+            + "candidati adatti, poi completa fino a \(target) con quel che manca alla settimana."
         )
 
         if !answers.focusGroups.isEmpty {
             let names = MuscleGroup.displayOrder.filter(answers.focusGroups.contains).map(\.displayName)
-            blocks.append("PRIORITÀ\nDai un esercizio in più a settimana a: \(names.joined(separator: ", ")).")
+            blocks.append(
+                "PRIORITÀ\nDai un esercizio in più a settimana a: \(names.joined(separator: ", ")). "
+                + "Mettili a inizio seduta, quando si è freschi."
+            )
         }
         if !answers.protectedZones.isEmpty {
             let names = StressZone.displayOrder.filter(answers.protectedZones.contains).map(\.displayName)
-            blocks.append(
-                "ZONE DA PROTEGGERE\n\(names.joined(separator: ", ")). "
-                + "Gli esercizi che le sollecitano sono già stati tolti dai candidati: "
-                + "scegli solo dall'elenco e sei a posto."
-            )
+            var text = "ZONE DA PROTEGGERE\n\(names.joined(separator: ", ")). "
+                + "Gli esercizi vietati sono già stati tolti dai candidati."
+            if candidates.hasCautionItems {
+                text += " Le righe che finiscono con \"|!\" sono ammesse ma delicate per quelle zone: "
+                    + "al massimo una per giorno, e mai come primo esercizio."
+            }
+            blocks.append(text)
         }
         if parameters.cardioSeconds != nil {
-            blocks.append("CARDIO\nChiudi ogni giorno con un esercizio di cardio dall'elenco, come ultimo id.")
+            blocks.append(
+                "CARDIO\nChiudi ogni giorno con un esercizio di cardio dall'elenco, come ultimo id. "
+                + "Conta fra i \(target)."
+            )
         }
 
         blocks.append(
             "CANDIDATI (\(candidates.count) esercizi)\n"
-            + "Formato: id|nome|gruppo muscolare|attrezzo|schema motorio|M multiarticolare o I isolamento\n"
+            + "Formato: id|nome|gruppo muscolare|attrezzo|schema motorio|M multiarticolare o I isolamento"
+            + (candidates.hasCautionItems ? "|! se delicato per le zone da proteggere" : "")
+            + "\n"
             + candidates.compactList
         )
 
-        blocks.append("RISPOSTA\n" + responseShape(days: parameters.days.count))
+        blocks.append("RISPOSTA\n" + responseShape(days: parameters.days.count, perDay: target))
 
         return blocks.joined(separator: "\n\n")
     }
 
     /// Esempio di forma della risposta, più leggibile dello schema per un
     /// modello piccolo (lo schema resta comunque imposto da `response_format`).
-    static func responseShape(days: Int) -> String {
+    static func responseShape(days: Int, perDay: Int) -> String {
         let example = (0..<max(1, days))
             .map { _ in "[\"0025\",\"0031\"]" }
             .joined(separator: ",")
         return """
         {"n":"nome breve della scheda","d":[\(example)]}
-        "n" è il nome della scheda. "d" ha esattamente \(days) elenchi di id, uno per giorno, \
-        nell'ordine dei giorni qui sopra. Nient'altro: niente numeri, niente nomi, niente note.
+        "d" ha esattamente \(days) elenchi di id, uno per giorno, nell'ordine dei giorni qui \
+        sopra, e ogni elenco ha esattamente \(perDay) id. Nient'altro: niente numeri, niente \
+        nomi di esercizi, niente note. Il nome della scheda lo decide l'app: "n" mettilo pure, \
+        ma non perderci tempo.
         """
     }
 
@@ -125,6 +149,18 @@ public enum GeneratorPrompt {
     public static func outputTokenBudget(parameters: GeneratorPlanParameters) -> Int {
         let items = parameters.days.count * (parameters.exercisesPerDay.upperBound + 1)
         return min(OpenRouterClient.defaultMaxTokens, max(600, items * 6 + 200))
+    }
+
+    /// Token in uscita per quel modello.
+    ///
+    /// I modelli che ragionano per forza spendono i primi token a pensare, e
+    /// quei token stanno **dentro** `max_tokens`: con il budget stretto escono
+    /// con `finish_reason: "length"` e il messaggio vuoto, che è esattamente
+    /// come è fallita la prima prova reale. A loro si concede il margine.
+    public static func outputTokenBudget(parameters: GeneratorPlanParameters, model: String) -> Int {
+        let base = outputTokenBudget(parameters: parameters)
+        guard OpenRouterClient.recommendedReasoning(forModel: model) != .off else { return base }
+        return min(OpenRouterClient.reasoningMaxTokens, base + OpenRouterClient.reasoningHeadroom)
     }
 
     // MARK: - JSON Schema

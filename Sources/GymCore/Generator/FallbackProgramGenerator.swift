@@ -106,7 +106,17 @@ public enum FallbackProgramGenerator {
             days.append(GeneratedProgramDraft.Day(name: blueprint.name, items: items))
         }
 
-        return GeneratedProgramDraft(name: name(for: answers), days: days)
+        // Le stesse regole che si impongono alla risposta del modello valgono
+        // anche qui: varietà fra giorni gemelli, copertura, equilibrio, ordine.
+        // Passare di qui costa nulla (la scheda di riserva è già quasi a posto)
+        // ed evita che le due strade divergano al primo ritocco delle regole.
+        let draft = GeneratedProgramDraft(name: name(for: answers), days: days)
+        return GeneratorValidator.repair(
+            draft,
+            answers: answers,
+            parameters: parameters,
+            candidates: candidates
+        ).draft
     }
 
     /// La scheda di riserva già convertita in ``Program``.
@@ -183,8 +193,9 @@ public enum FallbackProgramGenerator {
         holdIDs.contains(candidate.id)
     }
 
-    /// Nome della scheda: descrittivo e corto, senza trattini lunghi.
+    /// Nome della scheda: lo stesso che decide il telefono per le schede
+    /// dell'AI, così due schede uguali si chiamano uguale.
     public static func name(for answers: GeneratorAnswers) -> String {
-        "\(answers.split.displayName) \(answers.daysPerWeek) giorni"
+        GeneratorValidator.defaultName(for: answers)
     }
 }

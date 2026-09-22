@@ -53,6 +53,23 @@ public struct OpenRouterClient: Sendable {
     /// ragionare.
     public static let defaultMaxTokens = 1_200
 
+    /// Token in più concessi a chi ragiona per forza: il ragionamento si paga
+    /// dentro `max_tokens`, e senza margine il modello finisce i token prima di
+    /// scrivere la scheda.
+    public static let reasoningHeadroom = 1_600
+    /// Tetto per i modelli che ragionano.
+    public static let reasoningMaxTokens = 2_400
+
+    /// `true` per i modelli a cui conviene chiedere subito `json_object`.
+    ///
+    /// I modelli Anthropic su OpenRouter non dichiarano lo structured output
+    /// stretto: con `require_parameters: true` la richiesta non trova nessun
+    /// fornitore e torna indietro come 404. Partire da `json_object` risparmia
+    /// un giro completo; il decodificatore tollerante fa il resto.
+    public static func prefersJSONObject(forModel model: String) -> Bool {
+        model.lowercased().hasPrefix("anthropic/")
+    }
+
     // MARK: - Formato della risposta
 
     /// Come si chiede al modello di rispondere in JSON.
@@ -240,6 +257,16 @@ public struct OpenRouterClient: Sendable {
         case paymentRequired
         case rateLimited
         case modelNotFound(String)
+        /// Il modello esiste, ma **nessun fornitore** soddisfa i vincoli della
+        /// richiesta (`require_parameters`, `preferred_max_latency`, `sort`).
+        ///
+        /// OpenRouter risponde 404 anche in questo caso, con il messaggio "No
+        /// endpoints found that support …": confonderlo con "il modello non
+        /// esiste" fa scartare modelli perfettamente validi, ed è quello che è
+        /// successo nella prova reale del 18/09/2026 con i due modelli OpenAI,
+        /// rifiutati in un decimo di secondo. Qui vale la pena di riprovare una
+        /// volta sola senza i vincoli.
+        case noEndpointsForConstraints(String)
         case http(status: Int, message: String)
         case emptyResponse
         case malformedResponse(String)
@@ -262,6 +289,8 @@ public struct OpenRouterClient: Sendable {
                 "Troppe richieste, riprovare più tardi (429)."
             case .modelNotFound(let model):
                 "Il modello \"\(model)\" non esiste o non è disponibile."
+            case .noEndpointsForConstraints(let model):
+                "Nessun fornitore serve \"\(model)\" con i vincoli richiesti (risposta in JSON garantita, bassa latenza)."
             case .http(let status, let message):
                 "Errore HTTP \(status): \(message)"
             case .emptyResponse:
@@ -378,6 +407,24 @@ public struct OpenRouterClient: Sendable {
                 deadline: deadline
             )
         } catch let failure as Failure {
+            // Nessun fornitore soddisfa i vincoli: si riprova una volta sola
+            // senza, e con `json_object` al posto dello schema stretto. Dentro
+            // la scadenza condivisa, quindi l'utente non aspetta di più.
+            if case .noEndpointsForConstraints = failure {
+                return try await send(
+                    system: system,
+                    user: user,
+                    model: model,
+                    apiKey: apiKey,
+                    responseFormat: .jsonObject,
+                    temperature: temperature,
+                    maxTokens: maxTokens,
+                    session: session,
+                    reasoning: mode,
+                    deadline: deadline,
+                    relaxConstraints: true
+                )
+            }
             // Un solo nuovo tentativo, e solo se il servizio ha rifiutato
             // proprio il parametro `reasoning`: alcuni fornitori restituiscono
             // 400 invece di ignorarlo.
@@ -407,7 +454,8 @@ public struct OpenRouterClient: Sendable {
         maxTokens: Int,
         session: URLSession,
         reasoning: ReasoningMode,
-        deadline: Deadline?
+        deadline: Deadline?,
+        relaxConstraints: Bool = false
     ) async throws -> Completion {
         let started = Date()
         // Tempo concesso: il minore fra il tetto per chiamata e quel che resta
@@ -429,7 +477,8 @@ public struct OpenRouterClient: Sendable {
             responseFormat: responseFormat,
             temperature: temperature,
             maxTokens: maxTokens,
-            reasoning: reasoning
+            reasoning: reasoning,
+            relaxConstraints: relaxConstraints
         )
 
         let raw = try await OpenRouterClient.perform(request: request, session: session, allowance: allowance)
@@ -503,18 +552,20 @@ public struct OpenRouterClient: Sendable {
         let rawBody = String(data: data, encoding: .utf8) ?? ""
 
         guard (200..<300).contains(raw.status) else {
+            let message = errorMessage(in: data)
             switch raw.status {
             case 401, 403: throw Failure.unauthorized
             case 402: throw Failure.paymentRequired
             case 429: throw Failure.rateLimited
-            case 404: throw Failure.modelNotFound(model)
+            case 404:
+                // "Il modello non esiste" e "nessun fornitore soddisfa i vincoli"
+                // arrivano tutti e due come 404: li distingue solo il messaggio.
+                throw isNoEndpoints(message) ? Failure.noEndpointsForConstraints(model) : Failure.modelNotFound(model)
             default:
-                let message = errorMessage(in: data) ?? "risposta non interpretabile"
-                let lowered = message.lowercased()
-                if lowered.contains("not a valid model") || lowered.contains("no endpoints found") {
-                    throw Failure.modelNotFound(model)
-                }
-                throw Failure.http(status: raw.status, message: message)
+                let text = message ?? "risposta non interpretabile"
+                if isNoEndpoints(text) { throw Failure.noEndpointsForConstraints(model) }
+                if text.lowercased().contains("not a valid model") { throw Failure.modelNotFound(model) }
+                throw Failure.http(status: raw.status, message: text)
             }
         }
 
@@ -559,6 +610,19 @@ public struct OpenRouterClient: Sendable {
         )
     }
 
+    /// `true` se il messaggio dice "nessun fornitore per questi vincoli".
+    ///
+    /// Le formulazioni viste sul campo: "No endpoints found that support tool
+    /// use", "No endpoints found matching your data policy", "No allowed
+    /// providers are available for the selected model".
+    public static func isNoEndpoints(_ message: String?) -> Bool {
+        guard let lowered = message?.lowercased() else { return false }
+        return lowered.contains("no endpoints found")
+            || lowered.contains("no endpoints matching")
+            || lowered.contains("no allowed providers")
+            || lowered.contains("no providers available")
+    }
+
     /// Legge `usage`, compresi i token di ragionamento quando ci sono.
     public static func readUsage(_ value: Any?) -> Usage? {
         guard let raw = value as? [String: Any] else { return nil }
@@ -581,7 +645,8 @@ public struct OpenRouterClient: Sendable {
         responseFormat: ResponseFormat,
         temperature: Double,
         maxTokens: Int,
-        reasoning: ReasoningMode = .untouched
+        reasoning: ReasoningMode = .untouched,
+        relaxConstraints: Bool = false
     ) throws -> Data {
         var payload: [String: Any] = [
             "model": model,
@@ -597,7 +662,10 @@ public struct OpenRouterClient: Sendable {
         }
 
         var provider: [String: Any] = [:]
-        switch routing {
+        // Con i vincoli rilassati non si manda nessuna preferenza di fornitore:
+        // è il secondo tentativo dopo un "No endpoints found", e l'unica cosa
+        // che conta è ottenere una risposta.
+        switch relaxConstraints ? .none : routing {
         case .none:
             break
         case .latency:
@@ -618,8 +686,10 @@ public struct OpenRouterClient: Sendable {
                 ],
             ]
             // Con lo schema stretto il fornitore che non lo sa fare va escluso,
-            // altrimenti risponde in prosa e il tentativo è sprecato.
-            provider["require_parameters"] = true
+            // altrimenti risponde in prosa e il tentativo è sprecato. È però
+            // anche il vincolo che più spesso non lascia in piedi nessun
+            // fornitore: al secondo tentativo cade con gli altri.
+            if !relaxConstraints { provider["require_parameters"] = true }
         case .jsonObject:
             payload["response_format"] = ["type": "json_object"]
         }

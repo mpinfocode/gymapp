@@ -6,9 +6,11 @@ import GymCore
 // mette e se la scheda che produce sta in piedi.
 //
 //   swift run GymGeneratorTest --fallback                 (senza chiave, solo il generatore deterministico)
-//   swift run GymGeneratorTest --quick                    (3 scenari, 3 modelli veloci: meno di un minuto per modello)
-//   swift run GymGeneratorTest                            (tutti gli scenari, modelli di default)
-//   swift run GymGeneratorTest --model openai/gpt-4.1-nano --scenario 3g-fullbody
+//   swift run GymGeneratorTest --fallback --replay        (rivaluta le risposte già salvate, senza chiave)
+//   swift run GymGeneratorTest --quick --tier all         (3 scenari, fascia veloce e fascia accurata)
+//   swift run GymGeneratorTest --quick                    (3 scenari, sola fascia veloce)
+//   swift run GymGeneratorTest                            (tutti gli scenari, fascia veloce)
+//   swift run GymGeneratorTest --model google/gemini-2.5-flash --scenario 3g-fullbody
 //
 // La chiave non viene MAI stampata, salvata o inclusa nei rapporti.
 //
@@ -20,8 +22,10 @@ import GymCore
 struct Options {
     var models: [String] = []
     var scenarios: [String] = []
+    var tier: ModelPricing.Tier = .fast
     var runs = 1
     var fallbackOnly = false
+    var replay = false
     var quick = false
     var outputDirectory: String?
     var keyFile: String?
@@ -48,6 +52,11 @@ func parseOptions(_ arguments: [String]) -> OptionParsing {
         case "--model":
             guard let model = value("--model") else { return .invalid("--model vuole un identificativo") }
             options.models.append(model)
+        case "--tier":
+            guard let raw = value("--tier"), let tier = ModelPricing.Tier(rawValue: raw) else {
+                return .invalid("--tier vuole fast, smart o all")
+            }
+            options.tier = tier
         case "--scenario":
             guard let scenario = value("--scenario") else { return .invalid("--scenario vuole un nome") }
             options.scenarios.append(scenario)
@@ -62,6 +71,8 @@ func parseOptions(_ arguments: [String]) -> OptionParsing {
         case "--key-file":
             guard let path = value("--key-file") else { return .invalid("--key-file vuole un percorso") }
             options.keyFile = path
+        case "--replay":
+            options.replay = true
         case "--fallback":
             options.fallbackOnly = true
         case "--quick":
@@ -83,11 +94,16 @@ GymGeneratorTest · banco di prova del generatore di schede
 
   --quick            batteria rapida: \(Scenarios.quickNames.count) scenari, meno di un minuto per modello
                      (\(Scenarios.quickNames.joined(separator: ", ")))
+  --tier <fascia>    fast (default), smart o all
+                     fast:  \(ModelPricing.fastModels.joined(separator: ", "))
+                     smart: \(ModelPricing.smartModels.joined(separator: ", "))
   --model <id>       modello OpenRouter da provare, ripetibile
-                     (default: \(ModelPricing.defaultModels.joined(separator: ", ")))
+                     (se lo usi, la fascia viene ignorata)
   --scenario <nome>  scenario da provare, ripetibile (default: tutti)
   --runs <n>         ripetizioni per ogni coppia scenario/modello (default 1)
   --fallback         solo il generatore deterministico, senza rete e senza chiave
+  --replay           rilegge le risposte grezze già salvate nella cartella di uscita
+                     e le rivaluta con le regole di oggi: niente rete, niente chiave
   --pool             stampa la composizione della selezione curata ed esce
   --out <cartella>   dove scrivere rapporto.md e le risposte grezze
                      (default: docs/preview/generator)
@@ -140,9 +156,16 @@ struct Attempt {
     let repairs: [String]
     let quality: QualityReport?
     let draftLines: [String]
+    /// La bozza come l'ha consegnata il modello, prima di ogni riparazione.
+    let rawDraftLines: [String]
+    /// Il voto 0-100 di quella bozza grezza.
+    let score: DraftScore?
     let error: String?
     let failureKind: FailureKind
     let usedSchema: Bool
+    /// `true` se l'esito viene dalla rilettura di una risposta salvata: i
+    /// secondi non sono stati misurati adesso e non vanno nelle statistiche.
+    var isReplay = false
 
     var succeeded: Bool { error == nil && validation?.isValid == true }
     var isAI: Bool { model != "fallback" }
@@ -247,7 +270,9 @@ if !options.fallbackOnly {
     }
 }
 
-let models = ModelPricing.sortedBySpeed(options.models.isEmpty ? ModelPricing.defaultModels : options.models)
+let models = ModelPricing.sortedBySpeed(
+    options.models.isEmpty ? ModelPricing.models(tier: options.tier) : options.models
+)
 let client = OpenRouterClient()
 var attempts: [Attempt] = []
 
@@ -305,11 +330,19 @@ for scenario in chosenScenarios {
     print("Validatore: \(validation.isValid ? "valido" : "NON valido")")
     for error in validation.errors { print("  ! \(error)") }
     for warning in validation.warnings { print("  ~ \(warning)") }
+    let score = DraftScore.make(
+        dayIDs: draft.days.map { $0.items.map(\.id) },
+        answers: scenario.answers,
+        parameters: parameters,
+        candidates: candidates
+    )
     print("Qualità:")
     for finding in quality.findings { print("  \(finding.line)") }
+    print("Punteggio della bozza: \(score.total)/\(score.maximum)")
     print("Distribuzione muscolare:")
     print(quality.distributionLines.joined(separator: "\n"))
 
+    let lines = DraftFormatter.lines(draft: draft, candidates: candidates)
     attempts.append(
         Attempt(
             scenario: scenario,
@@ -323,7 +356,9 @@ for scenario in chosenScenarios {
             validation: validation,
             repairs: [],
             quality: quality,
-            draftLines: DraftFormatter.lines(draft: draft, candidates: candidates),
+            draftLines: lines,
+            rawDraftLines: lines,
+            score: score,
             error: nil,
             failureKind: .none,
             usedSchema: false
@@ -331,6 +366,93 @@ for scenario in chosenScenarios {
     )
 }
 writeReport()
+
+// MARK: - Rilettura delle risposte già salvate
+
+// `--replay` non chiama nessuno: prende i JSON delle prove precedenti, che sono
+// risposte vere di modelli veri, e li fa ripassare dalle regole di oggi. È il
+// modo più onesto di mostrare cosa cambia una modifica al validatore o alla
+// riparazione: stesso identico ingresso, uscita diversa.
+if options.replay {
+    print("\n=== Rilettura delle risposte già salvate ===")
+    let files = (try? FileManager.default.contentsOfDirectory(atPath: outputDirectory.path))?
+        .filter { $0.hasSuffix(".json") }.sorted() ?? []
+    for scenario in chosenScenarios {
+        let parameters = GeneratorPlanParameters(answers: scenario.answers)
+        let candidates = GeneratorCandidates.make(
+            answers: scenario.answers, library: repository, parameters: parameters
+        )
+        for file in files where file.hasPrefix(scenario.name + "__") {
+            let url = outputDirectory.appendingPathComponent(file)
+            guard
+                let data = try? Data(contentsOf: url),
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let choice = (object["choices"] as? [[String: Any]])?.first,
+                let message = choice["message"] as? [String: Any],
+                let text = message["content"] as? String,
+                let decoded = try? GeneratedProgramDraft.decode(fromModelOutput: text)
+            else {
+                print("  (\(file): non contiene una risposta rileggibile)")
+                continue
+            }
+            let stem = file.replacingOccurrences(of: ".json", with: "")
+                .replacingOccurrences(of: scenario.name + "__", with: "")
+            let parts = stem.split(separator: "_")
+            let run = Int(parts.last.map(String.init) ?? "1") ?? 1
+            let model = parts.dropLast().joined(separator: "_").replacingOccurrences(of: "_", with: "/")
+
+            let rawIDs = decoded.days.map { $0.items.map(\.id) }
+            let score = DraftScore.make(
+                dayIDs: rawIDs, answers: scenario.answers, parameters: parameters, candidates: candidates
+            )
+            let rawLines = DraftFormatter.lines(
+                draft: DraftFormatter.hydrate(
+                    dayIDs: rawIDs, answers: scenario.answers, parameters: parameters, candidates: candidates
+                ),
+                candidates: candidates
+            )
+            let (repaired, repairs) = GeneratorValidator.repair(
+                decoded, answers: scenario.answers, parameters: parameters, candidates: candidates
+            )
+            let validation = GeneratorValidator.validate(
+                repaired, answers: scenario.answers, parameters: parameters, candidates: candidates
+            )
+            let quality = QualityReport.make(
+                draft: repaired, answers: scenario.answers, parameters: parameters,
+                candidates: candidates, exercisesByID: exercisesByID
+            )
+            let lines = DraftFormatter.lines(draft: repaired, candidates: candidates)
+
+            print("\n--- \(scenario.name) · \(model) · risposta salvata")
+            print("Bozza grezza del modello:")
+            print(rawLines.joined(separator: "\n"))
+            print("Punteggio della bozza grezza: \(score.total)/\(score.maximum)")
+            for part in score.parts { print("  \(part.line)") }
+            print("Scheda dopo la riparazione:")
+            print(lines.joined(separator: "\n"))
+            print("Riparazioni: \(repairs.count)")
+            for repair in repairs { print("  · \(repair)") }
+            print("Validatore: \(validation.isValid ? "valido" : "NON valido")")
+            for error in validation.errors { print("  ! \(error)") }
+            for warning in validation.warnings { print("  ~ \(warning)") }
+
+            attempts.append(
+                Attempt(
+                    scenario: scenario, model: model, run: run, seconds: 0,
+                    usage: OpenRouterClient.readUsage(object["usage"]),
+                    cost: ModelPricing.cost(model: model, usage: OpenRouterClient.readUsage(object["usage"])),
+                    finishReason: (choice["finish_reason"] as? String),
+                    provider: object["provider"] as? String,
+                    validation: validation, repairs: repairs, quality: quality,
+                    draftLines: lines, rawDraftLines: rawLines, score: score,
+                    error: nil, failureKind: validation.isValid ? .none : .invalid, usedSchema: true,
+                    isReplay: true
+                )
+            )
+            writeReport()
+        }
+    }
+}
 
 // MARK: - Le chiamate vere
 
@@ -361,7 +483,7 @@ if !options.fallbackOnly, let apiKey {
                     parameters: parameters,
                     candidates: candidates
                 )
-                let maxTokens = GeneratorPrompt.outputTokenBudget(parameters: parameters)
+                let maxTokens = GeneratorPrompt.outputTokenBudget(parameters: parameters, model: model)
                 // La scadenza è quella vera dell'app: 40 secondi in tutto,
                 // ripiego sullo schema compreso.
                 let deadline = OpenRouterClient.Deadline()
@@ -422,7 +544,8 @@ if !options.fallbackOnly, let apiKey {
                             scenario: scenario, model: model, run: run, seconds: elapsed,
                             usage: nil, cost: nil, finishReason: nil, provider: nil,
                             validation: nil, repairs: [], quality: nil,
-                            draftLines: [], error: failure, failureKind: kind, usedSchema: usedSchema
+                            draftLines: [], rawDraftLines: [], score: nil,
+                            error: failure, failureKind: kind, usedSchema: usedSchema
                         )
                     )
                     writeReport()
@@ -468,7 +591,8 @@ if !options.fallbackOnly, let apiKey {
                             scenario: scenario, model: model, run: run, seconds: elapsed,
                             usage: completion.usage, cost: cost, finishReason: completion.finishReason,
                             provider: completion.provider, validation: nil, repairs: [],
-                            quality: nil, draftLines: [], error: String(describing: error),
+                            quality: nil, draftLines: [], rawDraftLines: [], score: nil,
+                            error: String(describing: error),
                             failureKind: .unreadable, usedSchema: usedSchema
                         )
                     )
@@ -481,6 +605,26 @@ if !options.fallbackOnly, let apiKey {
                     }
                     continue
                 }
+
+                // La bozza GREZZA, prima di qualunque riparazione: è quella
+                // su cui si giudica il modello, perché dopo la riparazione le
+                // schede sono tutte a posto e si assomigliano tutte.
+                let rawIDs = draft.days.map { $0.items.map(\.id) }
+                let score = DraftScore.make(
+                    dayIDs: rawIDs,
+                    answers: scenario.answers,
+                    parameters: parameters,
+                    candidates: candidates
+                )
+                let rawLines = DraftFormatter.lines(
+                    draft: DraftFormatter.hydrate(
+                        dayIDs: rawIDs,
+                        answers: scenario.answers,
+                        parameters: parameters,
+                        candidates: candidates
+                    ),
+                    candidates: candidates
+                )
 
                 let (repaired, repairs) = GeneratorValidator.repair(
                     draft,
@@ -503,6 +647,11 @@ if !options.fallbackOnly, let apiKey {
                 )
                 let lines = DraftFormatter.lines(draft: repaired, candidates: candidates)
 
+                print("Bozza grezza del modello:")
+                print(rawLines.joined(separator: "\n"))
+                print("Punteggio della bozza grezza: \(score.total)/\(score.maximum)")
+                for part in score.parts { print("  \(part.line)") }
+                print("Scheda dopo la riparazione:")
                 print(lines.joined(separator: "\n"))
                 print("Riparazioni: \(repairs.isEmpty ? "nessuna" : String(repairs.count))")
                 for repair in repairs { print("  · \(repair)") }
@@ -519,7 +668,8 @@ if !options.fallbackOnly, let apiKey {
                         scenario: scenario, model: model, run: run, seconds: elapsed,
                         usage: completion.usage, cost: cost, finishReason: completion.finishReason,
                         provider: completion.provider, validation: validation,
-                        repairs: repairs, quality: quality, draftLines: lines, error: nil,
+                        repairs: repairs, quality: quality, draftLines: lines,
+                        rawDraftLines: rawLines, score: score, error: nil,
                         failureKind: validation.isValid ? .none : .invalid, usedSchema: usedSchema
                     )
                 )

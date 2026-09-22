@@ -114,8 +114,8 @@ struct AISettingsSection: View {
         }
     }
 
-    /// Due o tre scorciatoie: gli stessi id del banco di prova, così si cambia
-    /// modello senza digitare uno slug a memoria.
+    /// Due scorciatoie sole: "Veloce" (il predefinito) e "Più accurato". Chi
+    /// vuole un altro modello lo scrive nel campo qui sopra.
     ///
     /// Stanno **fuori** dal gruppo grigio: un chip `surface` dentro una card
     /// `surface` sparirebbe.
@@ -123,7 +123,7 @@ struct AISettingsSection: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: Theme.Spacing.s) {
                 ForEach(AIPreferences.suggestedModels, id: \.self) { candidate in
-                    FilterChip(shortName(candidate), isSelected: app.ai.model == candidate) {
+                    FilterChip(AIPreferences.shortcutLabel(for: candidate), isSelected: app.ai.model == candidate) {
                         modelFocused = false
                         model = candidate
                         app.ai.model = candidate
@@ -134,11 +134,6 @@ struct AISettingsSection: View {
             .padding(.vertical, 2)
         }
         .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-    }
-
-    /// "google/gemini-2.5-flash-lite" → "gemini-2.5-flash-lite".
-    private func shortName(_ identifier: String) -> String {
-        identifier.split(separator: "/").last.map(String.init) ?? identifier
     }
 
     private func commitModel() {
